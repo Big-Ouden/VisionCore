@@ -4,8 +4,10 @@ cmake_minimum_required(VERSION 3.22)
 project(
   VisionCore 
   VERSION 0.1.0 
-  LANGUAGES CXX)
+  LANGUAGES CXX
+)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ===============
 # Config Globale 
@@ -22,10 +24,10 @@ endif()
 option(VISIONCORE_BUILD_TESTS "Build VisionCore tests" ON)
 
 
-# Find packages 
 # =================
 # Depedencies 
 # =================
+
 find_package(OpenCV 4 REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -34,6 +36,7 @@ find_package(Threads REQUIRED)
 # ========================
 # Sources auto-detection 
 # ========================
+
 file(GLOB_RECURSE VISIONCORE_SOURCES
     CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
