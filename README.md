@@ -87,27 +87,6 @@ The frontend is a client, not a dependency of the backend.
 
 ---
 
-## Build and Run
-
-### Backend
-
-```bash
-mkdir build
-cd build
-cmake ..
-make
-./visioncore
-```
-
-### Frontend
-
-```bash
-npm install
-npm run dev
-```
-
----
-
 ## Roadmap
 
 * Binary WebSocket streaming (remove Base64)
