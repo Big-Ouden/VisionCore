@@ -109,8 +109,31 @@ yay -Syy base-devel pkg-config
 ```
 
 
+## Build 
+
+### Backend 
+Instruction to build the backend : 
+```bash 
+cd backend/
+mkdir build
+cd build 
+cmake ..
+make -j$(nproc)
 ```
+
+
+Now you have the binary and library in `backend/build/` (`libvisioncore.a` & `visioncore_app`)
+
+## Erreur clang 
+
+In order to remove clangd erros in IDE (neovim in my case), you need to compile once the project (see "Build" ) and make : 
+```bash
+
+cd backend/
+ln -s build/compile_commands.json .
 ```
+
+After that your LSP (`:LspRestart` in neovim).
 
 --- 
 
