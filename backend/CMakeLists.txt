@@ -67,7 +67,7 @@ target_compile_options(visioncore
 
 
 # ========================
-# Executable principal
+# Executable 
 # ========================
 add_executable(visioncore_app
     src/main.cpp
