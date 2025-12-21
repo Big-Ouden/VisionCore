@@ -12,7 +12,7 @@ WebcamSource::WebcamSource(int device_id)
     : device_id_(device_id), configured_width_(0), configured_height_(0),
       configured_fps_(0) {}
 
-WebcamSource::~WebcamSource() { close(); }
+WebcamSource::~WebcamSource() = default;
 
 bool WebcamSource::open() {
   LOG_INFO("Opening webcam device" + std::to_string(device_id_));
