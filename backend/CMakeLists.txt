@@ -43,24 +43,20 @@ file(GLOB_RECURSE VISIONCORE_SOURCES
 # VisionCore Library 
 # ====================
 
-add_library(visioncore)
+add_library(visioncore ${VISIONCORE_SOURCES})
 
-target_sourves(visioncore ${VISIONCORE_SOURCES})
-
-target_include_directories(visioncore 
-  PUBLIC  
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
+target_include_directories(visioncore
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
-
 
 target_link_libraries(visioncore
-  PUBLIC
-    ${OpenCV_LIBS}
-    Threads::Threads
+    PUBLIC
+        ${OpenCV_LIBS}
+        Threads::Threads
 )
 
-
-target_compile_features(visioncore PUBLIC  CXX_std_20)
+target_compile_features(visioncore PUBLIC cxx_std_20)
 
 target_compile_options(visioncore
     PRIVATE
@@ -68,6 +64,21 @@ target_compile_options(visioncore
         -Wextra
         -Wpedantic
 )
+
+
+# ========================
+# Executable principal
+# ========================
+add_executable(visioncore_app
+    src/main.cpp
+)
+
+target_link_libraries(visioncore_app
+    PRIVATE
+        visioncore
+)
+
+target_compile_features(visioncore_app PRIVATE cxx_std_20)
 
 
 # ========================
