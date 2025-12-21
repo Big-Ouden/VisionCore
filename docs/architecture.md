@@ -3972,6 +3972,930 @@ Le frontend construit **dynamiquement** son interface à partir de cette répons
 
 ---
 
-## 📊 Comparaison des Modes d'Utilisation
+# AsciiVision - Architecture Multi-Threading Détaillée
 
-| Cas d'Usage | Source | Filtres Act
+## 🧵 Vue d'ensemble des Threads
+
+Le système utilise **4 threads principaux** + 1 thread réseau pour assurer un traitement fluide et sans blocage.
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           SYSTÈME MULTI-THREAD                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐
+│   THREAD 1       │   │   THREAD 2       │   │   THREAD 3       │   │   THREAD 4       │
+│   CAPTURE        │──→│   PROCESSING     │──→│   ENCODING       │──→│   NETWORK        │
+│                  │   │                  │   │                  │   │                  │
+│ Lecture source   │   │ Application      │   │ Compression      │   │ Envoi WebSocket  │
+│ vidéo            │   │ filtres          │   │ JPEG/PNG         │   │ aux clients      │
+└──────────────────┘   └──────────────────┘   └──────────────────┘   └──────────────────┘
+         │                      │                      │                      │
+         ↓                      ↓                      ↓                      ↓
+    Queue<Mat>            Queue<Mat>            Queue<Buffer>          Queue<Message>
+    (raw frames)          (processed)           (compressed)            (outgoing)
+    Capacity: 2           Capacity: 2           Capacity: 3             Capacity: 5
+
+                                    +
+                          ┌──────────────────┐
+                          │   THREAD 0       │
+                          │   MAIN           │
+                          │                  │
+                          │ Gestion UI       │
+                          │ Commandes JSON   │
+                          │ Configuration    │
+                          └──────────────────┘
+
+                                    +
+                          ┌──────────────────┐
+                          │   THREAD WS      │
+                          │   WebSocket      │
+                          │                  │
+                          │ Accepte clients  │
+                          │ Reçoit commandes │
+                          │ (géré par lib)   │
+                          └──────────────────┘
+```
+
+---
+
+## 🎯 Thread 1 : CAPTURE (Acquisition)
+
+### Responsabilité
+Lit les frames depuis la source vidéo le plus rapidement possible sans bloquer.
+
+### Géré par
+`FrameController::captureThreadFunc()`
+
+### Pseudo-code
+```cpp
+void FrameController::captureThreadFunc() {
+    cv::Mat raw_frame;
+    
+    while (running_) {
+        auto start = chrono::steady_clock::now();
+        
+        // 1. Lit une frame depuis la source
+        bool success = video_source_->readFrame(raw_frame);
+        
+        if (!success) {
+            LOG_ERROR("Failed to read frame, stopping capture");
+            break;
+        }
+        
+        // 2. Clone la frame (important pour éviter data race)
+        cv::Mat frame_copy = raw_frame.clone();
+        
+        // 3. Pousse vers la queue (BLOQUANT si pleine)
+        bool pushed = raw_frame_queue_.push(frame_copy, 
+                                            chrono::milliseconds(100));
+        
+        if (!pushed) {
+            dropped_frames_++;
+            LOG_WARNING("Dropped frame in capture");
+        }
+        
+        // 4. Statistiques
+        auto elapsed = chrono::steady_clock::now() - start;
+        perf_monitor_.recordDuration("capture_time", elapsed);
+        
+        // 5. Régulation FPS source (optionnel)
+        double source_fps = video_source_->getFPS();
+        if (source_fps > 0) {
+            auto target_delay = chrono::milliseconds(1000 / source_fps);
+            if (elapsed < target_delay) {
+                this_thread::sleep_for(target_delay - elapsed);
+            }
+        }
+    }
+    
+    // Ferme la queue pour signaler la fin
+    raw_frame_queue_.close();
+    LOG_INFO("Capture thread stopped");
+}
+```
+
+### Détails importants
+
+**Tâches :**
+1. Appelle `VideoSource::readFrame()` en boucle
+2. Clone la frame pour éviter les data races
+3. Pousse dans `raw_frame_queue_`
+4. Gère le FPS de la source
+5. Compte les frames droppées
+
+**Blocage :**
+- Bloque sur `VideoSource::readFrame()` si webcam lente
+- Bloque sur `raw_frame_queue_.push()` si la queue est pleine (backpressure)
+
+**Performance :**
+- Cible : ~30-60 FPS selon la source
+- Temps typique : 5-15ms par frame (webcam)
+- Temps typique : <1ms par frame (NetworkSource depuis queue)
+
+---
+
+## 🎨 Thread 2 : PROCESSING (Traitement)
+
+### Responsabilité
+Applique le pipeline de filtres sur chaque frame.
+
+### Géré par
+`FrameController::processingThreadFunc()`
+
+### Pseudo-code
+```cpp
+void FrameController::processingThreadFunc() {
+    cv::Mat raw_frame;
+    cv::Mat processed_frame;
+    
+    while (running_) {
+        auto start = chrono::steady_clock::now();
+        
+        // 1. Récupère une frame depuis capture (BLOQUANT si vide)
+        bool received = raw_frame_queue_.pop(raw_frame, 
+                                            chrono::milliseconds(100));
+        
+        if (!received) {
+            if (raw_frame_queue_.isClosed()) break;
+            continue; // Timeout, retry
+        }
+        
+        // 2. Applique le pipeline de filtres
+        try {
+            pipeline_->process(raw_frame, processed_frame);
+        } catch (const exception& e) {
+            LOG_ERROR("Processing error: " + string(e.what()));
+            continue;
+        }
+        
+        // 3. Pousse vers encoding (BLOQUANT si pleine)
+        bool pushed = processed_frame_queue_.push(processed_frame, 
+                                                  chrono::milliseconds(100));
+        
+        if (!pushed) {
+            dropped_frames_++;
+            LOG_WARNING("Dropped frame in processing");
+        }
+        
+        // 4. Statistiques
+        auto elapsed = chrono::steady_clock::now() - start;
+        perf_monitor_.recordDuration("processing_time", elapsed);
+        
+        // 5. Mise à jour compteurs
+        processed_frames_++;
+    }
+    
+    // Ferme la queue pour signaler la fin
+    processed_frame_queue_.close();
+    LOG_INFO("Processing thread stopped");
+}
+```
+
+### Détails importants
+
+**Tâches :**
+1. Lit depuis `raw_frame_queue_`
+2. Appelle `FramePipeline::process()`
+3. Pousse dans `processed_frame_queue_`
+4. Gère les erreurs de traitement
+
+**Blocage :**
+- Bloque sur `raw_frame_queue_.pop()` si vide
+- Bloque sur `processed_frame_queue_.push()` si pleine
+
+**Performance :**
+- Temps dépend FORTEMENT du pipeline actif
+- Pipeline simple (resize + grayscale) : 2-5ms
+- Pipeline complexe (face detection) : 50-200ms
+- Pipeline ASCII : 5-15ms
+- Pipeline IA (futur) : 100-500ms
+
+**Point critique :**
+C'est ici que se passe 90% du calcul. Si ce thread est trop lent, il ralentit tout le système (backpressure).
+
+---
+
+## 📦 Thread 3 : ENCODING (Compression)
+
+### Responsabilité
+Encode les frames traitées en JPEG/PNG pour transmission réseau.
+
+### Géré par
+`FrameController::encodingThreadFunc()`
+
+### Pseudo-code
+```cpp
+void FrameController::encodingThreadFunc() {
+    cv::Mat processed_frame;
+    vector<uint8_t> encoded_buffer;
+    uint32_t frame_id = 0;
+    
+    while (running_) {
+        auto start = chrono::steady_clock::now();
+        
+        // 1. Récupère frame traitée (BLOQUANT si vide)
+        bool received = processed_frame_queue_.pop(processed_frame, 
+                                                   chrono::milliseconds(100));
+        
+        if (!received) {
+            if (processed_frame_queue_.isClosed()) break;
+            continue;
+        }
+        
+        // 2. Encode en JPEG avec qualité configurable
+        vector<int> params = {cv::IMWRITE_JPEG_QUALITY, jpeg_quality_};
+        bool success = cv::imencode(".jpg", processed_frame, 
+                                   encoded_buffer, params);
+        
+        if (!success) {
+            LOG_ERROR("Failed to encode frame");
+            continue;
+        }
+        
+        // 3. Construit le message binaire avec header
+        BinaryFrameHeader header;
+        header.magic[0] = 'A'; header.magic[1] = 'V';
+        header.magic[2] = 'I'; header.magic[3] = 'S';
+        header.version = 0x0100;
+        header.frame_id = frame_id++;
+        header.timestamp = getCurrentTimestamp();
+        header.width = processed_frame.cols;
+        header.height = processed_frame.rows;
+        
+        // 4. Assemble header + payload
+        vector<uint8_t> message(sizeof(header) + encoded_buffer.size());
+        memcpy(message.data(), &header, sizeof(header));
+        memcpy(message.data() + sizeof(header), 
+               encoded_buffer.data(), 
+               encoded_buffer.size());
+        
+        // 5. Pousse vers network (BLOQUANT si pleine)
+        bool pushed = outgoing_queue_.push(message, 
+                                          chrono::milliseconds(100));
+        
+        if (!pushed) {
+            dropped_frames_++;
+            LOG_WARNING("Dropped frame in encoding");
+        }
+        
+        // 6. Statistiques
+        auto elapsed = chrono::steady_clock::now() - start;
+        perf_monitor_.recordDuration("encoding_time", elapsed);
+        perf_monitor_.recordMetric("encoded_size_kb", 
+                                   message.size() / 1024.0);
+    }
+    
+    // Ferme la queue pour signaler la fin
+    outgoing_queue_.close();
+    LOG_INFO("Encoding thread stopped");
+}
+```
+
+### Détails importants
+
+**Tâches :**
+1. Lit depuis `processed_frame_queue_`
+2. Encode avec OpenCV `cv::imencode()`
+3. Ajoute le header binaire personnalisé
+4. Pousse dans `outgoing_queue_`
+
+**Blocage :**
+- Bloque sur `processed_frame_queue_.pop()` si vide
+- Bloque sur `outgoing_queue_.push()` si pleine
+
+**Performance :**
+- Temps typique : 5-15ms (dépend de la taille et qualité JPEG)
+- 320×240 @ 75% qualité : ~10-20 KB par frame
+- 640×480 @ 85% qualité : ~30-50 KB par frame
+
+**Optimisation possible :**
+- Utiliser libjpeg-turbo au lieu de OpenCV (2-3x plus rapide)
+- Encoder en WebP (meilleure compression)
+
+---
+
+## 🌐 Thread 4 : NETWORK (Envoi)
+
+### Responsabilité
+Envoie les frames encodées à tous les clients WebSocket connectés.
+
+### Géré par
+`FrameController::networkThreadFunc()`
+
+### Pseudo-code
+```cpp
+void FrameController::networkThreadFunc() {
+    vector<uint8_t> message;
+    
+    while (running_) {
+        auto start = chrono::steady_clock::now();
+        
+        // 1. Récupère message à envoyer (BLOQUANT si vide)
+        bool received = outgoing_queue_.pop(message, 
+                                           chrono::milliseconds(100));
+        
+        if (!received) {
+            if (outgoing_queue_.isClosed()) break;
+            continue;
+        }
+        
+        // 2. Envoie à tous les clients connectés
+        try {
+            ws_server_->broadcastBinary(message);
+            sent_frames_++;
+        } catch (const exception& e) {
+            LOG_ERROR("Network send error: " + string(e.what()));
+        }
+        
+        // 3. Statistiques
+        auto elapsed = chrono::steady_clock::now() - start;
+        perf_monitor_.recordDuration("network_time", elapsed);
+        
+        // 4. Throttling si nécessaire (limite bande passante)
+        if (max_bandwidth_kbps_ > 0) {
+            double message_kb = message.size() / 1024.0;
+            double send_time_ms = (message_kb / max_bandwidth_kbps_) * 1000;
+            if (elapsed < chrono::milliseconds((int)send_time_ms)) {
+                this_thread::sleep_for(
+                    chrono::milliseconds((int)send_time_ms) - elapsed);
+            }
+        }
+    }
+    
+    LOG_INFO("Network thread stopped");
+}
+```
+
+### Détails importants
+
+**Tâches :**
+1. Lit depuis `outgoing_queue_`
+2. Broadcast via `WebSocketServer::broadcastBinary()`
+3. Gère les erreurs réseau
+4. Peut appliquer du throttling
+
+**Blocage :**
+- Bloque sur `outgoing_queue_.pop()` si vide
+- Bloque sur `send()` si buffer TCP plein (rare)
+
+**Performance :**
+- Temps dépend du réseau : 1-20ms en LAN, 20-100ms+ en WAN
+- Taille typique : 10-50 KB par frame
+- Débit typique : 150-750 KB/s @ 15 FPS
+
+**Non-bloquant :**
+Ce thread utilise des sockets non-bloquantes. Si un client est lent, il ne ralentit PAS les autres grâce à des buffers d'envoi par client.
+
+---
+
+## 🎛️ Thread 0 : MAIN (Principal)
+
+### Responsabilité
+Gère les commandes utilisateur et la configuration du système.
+
+### Géré par
+`main()` et callbacks
+
+### Pseudo-code
+```cpp
+int main() {
+    // 1. Initialisation
+    FrameController controller;
+    WebSocketServer ws_server(9002);
+    MessageHandler msg_handler;
+    
+    // 2. Configure les callbacks de commandes
+    msg_handler.registerCommandHandler("start_engine", 
+        [&controller](const json& payload) {
+            // THREAD-SAFE : appel depuis thread WebSocket
+            controller.start(/* ... */);
+        });
+    
+    msg_handler.registerCommandHandler("stop_engine",
+        [&controller](const json& payload) {
+            controller.stop(); // BLOQUANT : attend arrêt threads
+        });
+    
+    msg_handler.registerCommandHandler("set_parameter",
+        [&controller](const json& payload) {
+            // THREAD-SAFE : pipeline utilise mutex
+            controller.getPipeline().updateFilterParameter(/* ... */);
+        });
+    
+    // 3. Démarre le serveur WebSocket
+    ws_server.start(); // Lance son propre thread
+    
+    // 4. Boucle principale (attend commandes)
+    while (running) {
+        // Peut afficher des stats, gérer signaux, etc.
+        this_thread::sleep_for(chrono::seconds(1));
+        
+        // Affiche stats
+        auto stats = controller.getStats();
+        cout << "FPS: " << stats.current_fps << endl;
+    }
+    
+    // 5. Arrêt propre
+    controller.stop();
+    ws_server.stop();
+    
+    return 0;
+}
+```
+
+### Détails importants
+
+**Tâches :**
+1. Initialise tous les composants
+2. Configure les handlers de commandes
+3. Gère le cycle de vie global
+4. Peut afficher des logs/stats
+5. Gère Ctrl+C pour arrêt propre
+
+**Thread-safety :**
+- Les callbacks sont appelés depuis le thread WebSocket
+- Tous les appels à `FrameController` doivent être thread-safe
+- `FramePipeline` utilise des mutex pour les modifications
+
+---
+
+## 📡 Thread WS : WebSocket Server
+
+### Responsabilité
+Gère les connexions clients et reçoit les commandes/frames.
+
+### Géré par
+`WebSocketpp` (bibliothèque externe)
+
+### Comportement
+```cpp
+// Ce thread est géré automatiquement par WebSocketpp
+void WebSocketServer::start() {
+    server_.listen(port_);
+    server_.start_accept();
+    
+    // Lance le thread de traitement des événements
+    server_thread_ = thread([this]() {
+        server_.run(); // Boucle événementielle
+    });
+}
+
+// Callbacks (appelés depuis thread WebSocket)
+void WebSocketServer::onOpen(connection_hdl hdl) {
+    lock_guard<mutex> lock(connections_mutex_);
+    connections_.insert(hdl);
+    
+    if (connection_callback_) {
+        connection_callback_(hdl); // Thread-safe callback
+    }
+}
+
+void WebSocketServer::onMessage(connection_hdl hdl, message_ptr msg) {
+    if (msg->get_opcode() == websocketpp::frame::opcode::binary) {
+        // Frame binaire = données webcam client
+        const string& payload = msg->get_payload();
+        vector<uint8_t> data(payload.begin(), payload.end());
+        
+        if (binary_callback_) {
+            binary_callback_(hdl, data); // → NetworkSource::pushFrame()
+        }
+    } else {
+        // Message texte = commande JSON
+        if (message_callback_) {
+            message_callback_(hdl, msg->get_payload()); // → MessageHandler
+        }
+    }
+}
+```
+
+### Détails importants
+
+**Tâches :**
+1. Accepte connexions clients
+2. Reçoit messages JSON (commandes)
+3. Reçoit messages binaires (frames webcam client)
+4. Envoie messages binaires (résultats)
+
+**Thread-safety :**
+- Les callbacks sont appelés depuis CE thread
+- Tous les accès aux structures partagées doivent être protégés par mutex
+- `broadcastBinary()` utilise un mutex sur `connections_`
+
+---
+
+## 🔄 Communication Inter-Threads
+
+### ThreadSafeQueue - Implémentation
+
+```cpp
+template<typename T>
+class ThreadSafeQueue {
+public:
+    ThreadSafeQueue(size_t max_capacity) 
+        : max_capacity_(max_capacity), closed_(false) {}
+    
+    // BLOQUANT : attend si pleine
+    bool push(T item, chrono::milliseconds timeout = chrono::milliseconds(0)) {
+        unique_lock<mutex> lock(mutex_);
+        
+        if (closed_) return false;
+        
+        // Attend que la queue ne soit pas pleine
+        if (max_capacity_ > 0) {
+            if (timeout.count() > 0) {
+                if (!cv_not_full_.wait_for(lock, timeout, [this]() {
+                    return queue_.size() < max_capacity_ || closed_;
+                })) {
+                    return false; // Timeout
+                }
+            } else {
+                cv_not_full_.wait(lock, [this]() {
+                    return queue_.size() < max_capacity_ || closed_;
+                });
+            }
+        }
+        
+        if (closed_) return false;
+        
+        queue_.push(move(item));
+        cv_not_empty_.notify_one(); // Réveille un thread en attente
+        return true;
+    }
+    
+    // BLOQUANT : attend si vide
+    bool pop(T& item, chrono::milliseconds timeout = chrono::milliseconds(0)) {
+        unique_lock<mutex> lock(mutex_);
+        
+        // Attend qu'un élément soit disponible
+        if (timeout.count() > 0) {
+            if (!cv_not_empty_.wait_for(lock, timeout, [this]() {
+                return !queue_.empty() || closed_;
+            })) {
+                return false; // Timeout
+            }
+        } else {
+            cv_not_empty_.wait(lock, [this]() {
+                return !queue_.empty() || closed_;
+            });
+        }
+        
+        if (queue_.empty()) return false; // Fermée et vide
+        
+        item = move(queue_.front());
+        queue_.pop();
+        cv_not_full_.notify_one(); // Réveille un thread en attente
+        return true;
+    }
+    
+    void close() {
+        lock_guard<mutex> lock(mutex_);
+        closed_ = true;
+        cv_not_empty_.notify_all(); // Réveille TOUS les threads
+        cv_not_full_.notify_all();
+    }
+    
+private:
+    queue<T> queue_;
+    size_t max_capacity_;
+    atomic<bool> closed_;
+    mutable mutex mutex_;
+    condition_variable cv_not_empty_;
+    condition_variable cv_not_full_;
+};
+```
+
+### Principe du Backpressure
+
+```
+Thread Capture rapide (60 FPS)
+         ↓
+    [Queue: 2 slots]  ← Si pleine, Capture BLOQUE
+         ↓
+Thread Processing lent (20 FPS)
+         ↓
+    [Queue: 2 slots]  ← Si pleine, Processing BLOQUE
+         ↓
+Thread Encoding rapide (50 FPS)
+         ↓
+    [Queue: 3 slots]  ← Si pleine, Encoding BLOQUE
+         ↓
+Thread Network lent (15 FPS)
+
+Résultat : Le système s'adapte automatiquement au maillon le plus lent
+sans mutex dans le code métier !
+```
+
+---
+
+## 📊 Diagramme de Séquence Complet
+
+```
+TEMPS →
+
+Frame N arrives
+
+CAPTURE         PROCESSING       ENCODING         NETWORK
+   │                │                │                │
+   │ readFrame()    │                │                │
+   │────┐           │                │                │
+   │    │ 10ms      │                │                │
+   │◄───┘           │                │                │
+   │                │                │                │
+   │ queue.push()   │                │                │
+   │───────────────→│                │                │
+   │                │ queue.pop()    │                │
+   │                │────┐           │                │
+   │                │    │ 1ms       │                │
+   │                │◄───┘           │                │
+   │                │                │                │
+   │                │ pipeline.      │                │
+   │                │  process()     │                │
+   │                │────┐           │                │
+   │                │    │ 25ms      │                │
+   │                │◄───┘           │                │
+   │                │                │                │
+   │                │ queue.push()   │                │
+   │                │───────────────→│                │
+   │                │                │ queue.pop()    │
+   │                │                │────┐           │
+   │                │                │    │ 1ms       │
+   │                │                │◄───┘           │
+   │                │                │                │
+   │                │                │ imencode()     │
+   │                │                │────┐           │
+   │                │                │    │ 12ms      │
+   │                │                │◄───┘           │
+   │                │                │                │
+   │                │                │ queue.push()   │
+   │                │                │───────────────→│
+   │                │                │                │ queue.pop()
+   │                │                │                │────┐
+   │                │                │                │    │ 1ms
+   │                │                │                │◄───┘
+   │                │                │                │
+   │                │                │                │ broadcast()
+   │                │                │                │────┐
+   │                │                │                │    │ 8ms
+   │                │                │                │◄───┘
+   │                │                │                │
+   │                │                │                │ (Frame sent
+   │                │                │                │  to clients)
+   │                │                │                │
+   ↓                ↓                ↓                ↓
+
+Total latency: 10 + 25 + 12 + 8 = 55ms
+```
+
+---
+
+## ⚙️ Gestion du Cycle de Vie
+
+### Démarrage (start)
+
+```cpp
+void FrameController::start(unique_ptr<VideoSource> source, double target_fps) {
+    if (running_) throw runtime_error("Already running");
+    
+    // 1. Initialise la source
+    source_ = move(source);
+    if (!source_->open()) {
+        throw runtime_error("Cannot open video source");
+    }
+    
+    // 2. Prépare les queues
+    raw_frame_queue_ = ThreadSafeQueue<cv::Mat>(2);
+    processed_frame_queue_ = ThreadSafeQueue<cv::Mat>(2);
+    outgoing_queue_ = ThreadSafeQueue<vector<uint8_t>>(3);
+    
+    // 3. Flag de run
+    running_ = true;
+    
+    // 4. Lance les threads DANS L'ORDRE
+    capture_thread_ = thread(&FrameController::captureThreadFunc, this);
+    processing_thread_ = thread(&FrameController::processingThreadFunc, this);
+    encoding_thread_ = thread(&FrameController::encodingThreadFunc, this);
+    network_thread_ = thread(&FrameController::networkThreadFunc, this);
+    
+    LOG_INFO("FrameController started with 4 worker threads");
+}
+```
+
+### Arrêt (stop)
+
+```cpp
+void FrameController::stop() {
+    if (!running_) return;
+    
+    LOG_INFO("Stopping FrameController...");
+    
+    // 1. Flag d'arrêt
+    running_ = false;
+    
+    // 2. Ferme les queues (débloque tous les threads)
+    raw_frame_queue_.close();
+    processed_frame_queue_.close();
+    outgoing_queue_.close();
+    
+    // 3. Attend la fin de TOUS les threads (ORDRE IMPORTANT)
+    if (capture_thread_.joinable()) {
+        capture_thread_.join();
+        LOG_INFO("Capture thread joined");
+    }
+    
+    if (processing_thread_.joinable()) {
+        processing_thread_.join();
+        LOG_INFO("Processing thread joined");
+    }
+    
+    if (encoding_thread_.joinable()) {
+        encoding_thread_.join();
+        LOG_INFO("Encoding thread joined");
+    }
+    
+    if (network_thread_.joinable()) {
+        network_thread_.join();
+        LOG_INFO("Network thread joined");
+    }
+    
+    // 4. Ferme la source
+    if (source_) {
+        source_->close();
+    }
+    
+    LOG_INFO("FrameController stopped cleanly");
+}
+```
+
+**Ordre crucial :**
+1. `running_ = false` → signale à tous
+2. Ferme les queues → débloque les `wait()`
+3. Join dans l'ordre : capture → processing → encoding → network
+4. Ferme la source
+
+---
+
+## 🎛️ Configuration Thread-Safe
+
+### Modification du Pipeline en temps réel
+
+```cpp
+void FramePipeline::updateFilterParameter(
+    const string& filter_name,
+    const string& param_name,
+    const json& value
+) {
+    // MUTEX : protège contre modifications concurrentes
+    lock_guard<mutex> lock(filters_mutex_);
+    
+    for (auto& filter : filters_) {
+        if (filter->getName() == filter_name) {
+            filter->setParameter(param_name, value);
+            LOG_INFO("Updated " + filter_name + "." + param_name);
+            return;
+        }
+    }
+    
+    throw runtime_error("Filter not found: " + filter_name);
+}
+
+void FramePipeline::process(const cv::Mat& input, cv::Mat& output) {
+    // SHARED_LOCK : permet lectures multiples simultanées
+    shared_lock<shared_mutex> lock(filters_mutex_);
+    
+    cv::Mat current = input.clone();
+    cv::Mat temp;
+    
+    for (auto& filter : filters_) {
+        if (filter->isEnabled()) {
+            filter->apply(current, temp);
+            current = temp;
+        }
+    }
+    
+    output = current;
+}
+```
+
+**Avantage `shared_mutex` :**
+- Plusieurs threads peuvent `process()` en même temps
+- Un seul thread peut `updateFilterParameter()` à la fois
+- Si un update est en cours, `process()` attend
+
+---
+
+## 📈 Métriques de Performance
+
+### Collecte Thread-Safe
+
+```cpp
+class PerformanceMonitor {
+public:
+    void recordDuration(const string& metric, chrono::milliseconds duration) {
+        lock_guard<mutex> lock(metrics_mutex_);
+        
+        auto& data = metrics_[metric];
+        double value_ms = duration.count();
+        
+        data.current = value_ms;
+        data.sum += value_ms;
+        data.count++;
+        data.min = min(data.min, value_ms);
+        data.max = max(data.max, value_ms);
+    }
+    
+    PerformanceStats getStats(const string& metric) const {
+        lock_guard<mutex> lock(metrics_mutex_);
+        
+        auto it = metrics_.find(metric);
+        if (it == metrics_.end()) return {};
+        
+        auto& data = it->second;
+        return {
+            .min_value = data.min,
+            .max_value = data.max,
+            .avg_value = data.sum / data.count,
+            .current_value = data.current,
+            .sample_count = data.count
+        };
+    }
+};
+```
+
+### Exemple d'affichage
+
+```
+=== Performance Stats ===
+capture_time:    min=8ms  avg=10ms  max=15ms  current=9ms  (samples=1247)
+processing_time: min=20ms avg=25ms  max=80ms  current=23ms (samples=1247)
+encoding_time:   min=10ms avg=12ms  max=18ms  current=11ms (samples=1247)
+network_time:    min=5ms  avg=8ms   max=25ms  current=7ms  (samples=1247)
+total_latency:   55ms (capture→network)
+FPS:             28.5 (target: 30)
+dropped_frames:  3 (0.24%)
+```
+
+---
+
+## 🚀 Optimisations Possibles
+
+### 1. Thread Pool pour Processing
+
+Au lieu d'un seul thread processing, utiliser un pool :
+
+```cpp
+// Thread Pool pour traiter plusieurs frames en parallèle
+ThreadPool processing_pool(4); // 4 workers
+
+// Dans capture thread
+processing_pool.enqueue([frame]() {
+    cv::Mat processed;
+    pipeline->process(frame, processed);
+    processed_frame_queue_.push(processed);
+});
+```
+
+**Avantage :** Parallélisation du traitement si plusieurs frames peuvent être traitées simultanément.
+
+### 2. Lock-Free Queues
+
+Remplacer `ThreadSafeQueue` par des queues lock-free (boost::lockfree) :
+
+```cpp
+#include <boost/lockfree/spsc_queue.hpp>
+
+// Single Producer Single Consumer = zero contention
+boost::lockfree::spsc_queue<cv::Mat, capacity<2>> raw_frame_queue_;
+```
+
+**Avantage :** Performances accrues (pas de mutex), mais complexité++.
+
+### 3. Zero-Copy avec Shared Pointers
+
+```cpp
+using FramePtr = shared_ptr<cv::Mat>;
+
+ThreadSafeQueue<FramePtr> raw_frame_queue_;
+
+// Capture thread
+auto frame = make_shared<cv::Mat>();
+source_->readFrame(*frame);
+raw_frame_queue_.push(frame); // Copie juste le shared_ptr, pas la Mat
+```
+
+**Avantage :** Évite les copies de cv::Mat (économie CPU + mémoire).
+
+---
+
+## ✅ Résumé
+
+| Thread | Rôle | Input | Output | Temps Typique | Blocage |
+|--------|------|-------|--------|---------------|---------|
+| **Capture** | Lit source vidéo | VideoSource | cv::Mat raw | 5-15ms | `readFrame()`, `queue.push()` |
+| **Processing** | Applique filtres | cv::Mat raw | cv::Mat processed | 5-200ms | `queue.pop()`, `queue.push()` |
+| **Encoding** | Compresse JPEG | cv::Mat processed | vector<uint8_t> | 5-15ms | `queue.pop()`, `queue.push()` |
+| **Network** | Envoie clients | vector<uint8_t> | - | 1-20ms | `queue.pop()`, `send()` |
+| **Main** | Commandes | User input | Config | - | Callbacks |
+| **WebSocket** | Réseau entrant | Network | Messages | - | I/O réseau |
+
+**Total latency (capture→display) :** 50-150ms selon pipeline et réseau.
