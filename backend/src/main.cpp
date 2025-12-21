@@ -1,5 +1,6 @@
 #include "core/WebcamSource.hpp"
 #include "utils/Logger.hpp"
+#include <QApplication>
 #include <chrono>
 #include <opencv2/opencv.hpp>
 #include <string>
@@ -8,76 +9,50 @@
 using namespace visioncore;
 
 int main(int argc, char *argv[]) {
-  bool show_gui = false;
 
-  // Parse argument
-  if (argc > 1 && std::string(argv[1]) == "--gui") {
-    show_gui = true;
-  }
+  QApplication app(argc, argv); // OBLIGATOIRE avec HighGUI+Qt
+
+  bool show_gui = true;
+  if (argc > 1 && std::string(argv[1]) == "--no-gui")
+    show_gui = false;
 
   LOG_INFO("=== WebcamSource Test ===");
   LOG_INFO("GUI mode: " + std::string(show_gui ? "enabled" : "disabled"));
 
   try {
-    auto webcam = std::make_unique<core::WebcamSource>(0);
+    {
+      visioncore::core::WebcamSource webcam(0);
 
-    if (!webcam->open()) {
-      LOG_ERROR("Cannot open webcam");
-      return 1;
-    }
-
-    LOG_INFO("Webcam properties:");
-    LOG_INFO("  Size: " + std::to_string(webcam->getWidth()) + "x" +
-             std::to_string(webcam->getHeight()));
-    LOG_INFO("  FPS: " + std::to_string(webcam->getFPS()));
-
-    cv::Mat frame;
-    int frames_captured = 0;
-
-    for (int i = 0; i < 30; ++i) {
-      if (!webcam->readFrame(frame)) {
-        LOG_ERROR("Failed to read frame");
-        break;
+      if (!webcam.open()) {
+        LOG_ERROR("Cannot open webcam");
+        return 1;
       }
 
-      if (frame.empty()) {
-        continue;
-      }
-
-      frames_captured++;
-
-      // Affichage optionnel
-      if (show_gui) {
-        cv::imshow("Webcam Test", frame);
-        int key = cv::waitKey(33);
-        if (key == 'q' || key == 27)
+      cv::Mat frame;
+      for (int i = 0; i < 30; ++i) {
+        if (!webcam.readFrame(frame))
           break;
-      } else {
-        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+
+        if (show_gui) {
+          cv::imshow("Webcam Test", frame);
+          if (cv::waitKey(33) == 27)
+            break;
+        }
       }
 
-      if (i % 10 == 0) {
-        LOG_DEBUG("Frame " + std::to_string(i) + " captured");
-      }
-    }
-
-    LOG_INFO("Total frames: " + std::to_string(frames_captured));
-    webcam->close();
+      LOG_INFO("Webcam test finished");
+    } //  WebcamSource + VideoCapture détruits ICI
 
     if (show_gui) {
       cv::destroyAllWindows();
-      for (int i = 0; i < 10; ++i)
-        cv::waitKey(10);
-      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      cv::waitKey(50);
     }
 
     LOG_INFO("Test completed");
     return 0;
 
   } catch (const std::exception &e) {
-    LOG_CRITICAL("Exception: " + std::string(e.what()));
-    if (show_gui)
-      cv::destroyAllWindows();
+    LOG_CRITICAL(e.what());
     return 1;
   }
 }
