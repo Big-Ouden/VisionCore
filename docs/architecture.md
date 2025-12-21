@@ -1689,6 +1689,7 @@ private:
 
 #### **WebSocketServer.hpp**
 
+
 ```cpp
 namespace asciivision::network {
 
@@ -1745,5 +1746,2232 @@ private:
     ConnectionCallback connection_callback_;
     ConnectionCallback disconnection_callback_;
 
+    std::set<connection_hdl, std::owner_less<connection_hdl>> connections_;
+    mutable std::mutex connections_mutex_;
+    
+    // Handlers WebSocketpp
+    void onOpen(connection_hdl hdl);
+    void onClose(connection_hdl hdl);
+    void onMessage(connection_hdl hdl, server<websocketpp::config::asio>::message_ptr msg);
+};
+
+} // namespace asciivision::network
+```
+
+**Utilité**: Serveur WebSocket bas niveau. Gère les connexions clients et le transport des messages. Ne connaît pas le protocole applicatif.
+
+---
+
+#### **MessageHandler.hpp**
+
+```cpp
+namespace asciivision::network {
+
+class MessageHandler {
+public:
+    using CommandCallback = std::function<void(const nlohmann::json&)>;
+    
+    MessageHandler();
+    ~MessageHandler() = default;
+    
+    // Traite un message JSON reçu
+    // Paramètres:
+    //   - message: JSON stringifié
+    // Retourne: réponse JSON (ou vide si pas de réponse)
+    std::string handleMessage(const std::string& message);
+    
+    // Enregistre un handler pour un type de commande
+    // Paramètres:
+    //   - command_type: type de commande ("start_engine", "stop_engine", etc.)
+    //   - callback: fonction appelée avec le payload
+    void registerCommandHandler(const std::string& command_type, 
+                                CommandCallback callback);
+    
+    // Crée un message de statut moteur
+    static std::string createEngineStatusMessage(
+        const processing::EngineStats& stats,
+        processing::EngineState state);
+    
+    // Crée un message d'erreur
+    static std::string createErrorMessage(
+        const std::string& error_code,
+        const std::string& message,
+        bool recoverable = false);
+    
+    // Crée un message de capacités
+    static std::string createCapabilitiesMessage(
+        const std::vector<std::string>& sources,
+        const nlohmann::json& filters_metadata);
+    
+    // Crée un message d'acknowledgement
+    static std::string createAckMessage(const std::string& command_type);
+    
+private:
+    std::unordered_map<std::string, CommandCallback> command_handlers_;
+    mutable std::mutex handlers_mutex_;
+    
+    // Valide la structure d'un message
+    bool validateMessage(const nlohmann::json& msg) const;
+    
+    // Extrait la version du protocole
+    std::string getProtocolVersion(const nlohmann::json& msg) const;
+};
+
+} // namespace asciivision::network
+```
+
+**Utilité**: Couche protocole. Parse et valide les messages JSON, dispatch aux handlers appropriés, génère les réponses formatées.
+
+---
+
+#### **ProtocolTypes.hpp**
+
+```cpp
+namespace asciivision::network {
+
+// Types de messages
+namespace MessageType {
+    constexpr const char* START_ENGINE = "start_engine";
+    constexpr const char* STOP_ENGINE = "stop_engine";
+    constexpr const char* UPDATE_FILTERS = "update_filters";
+    constexpr const char* SET_PARAMETER = "set_parameter";
+    constexpr const char* GET_CAPABILITIES = "get_capabilities";
+    constexpr const char* GET_STATUS = "get_status";
+    
+    constexpr const char* ENGINE_STATUS = "engine_status";
+    constexpr const char* ERROR = "error";
+    constexpr const char* CAPABILITIES = "capabilities";
+    constexpr const char* ACK = "acknowledgement";
+    constexpr const char* FRAME = "frame";
+}
+
+// Codes d'erreur
+namespace ErrorCode {
+    constexpr const char* INVALID_MESSAGE = "INVALID_MESSAGE";
+    constexpr const char* UNKNOWN_COMMAND = "UNKNOWN_COMMAND";
+    constexpr const char* SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE";
+    constexpr const char* ALREADY_RUNNING = "ALREADY_RUNNING";
+    constexpr const char* NOT_RUNNING = "NOT_RUNNING";
+    constexpr const char* FILTER_NOT_FOUND = "FILTER_NOT_FOUND";
+    constexpr const char* INVALID_PARAMETER = "INVALID_PARAMETER";
+    constexpr const char* ENCODING_ERROR = "ENCODING_ERROR";
+    constexpr const char* INTERNAL_ERROR = "INTERNAL_ERROR";
+}
+
+// Version du protocole
+constexpr const char* PROTOCOL_VERSION = "1.0";
+
+// Structure du header binaire
+struct BinaryFrameHeader {
+    char magic[4];        // "AVIS"
+    uint16_t version;     // 0x0100
+    uint32_t frame_id;
+    uint64_t timestamp;
+    uint16_t width;
+    uint16_t height;
+    uint16_t reserved;    // Pour alignement/future extension
+} __attribute__((packed));
+
+static_assert(sizeof(BinaryFrameHeader) == 24, "Header must be 24 bytes");
+
+} // namespace asciivision::network
+```
+
+**Utilité**: Définitions centralisées du protocole. Évite les magic strings et garantit la cohérence.
+
+---
+
+#### **BinaryFrameEncoder.hpp**
+
+```cpp
+namespace asciivision::network {
+
+class BinaryFrameEncoder {
+public:
+    BinaryFrameEncoder() = default;
+    ~BinaryFrameEncoder() = default;
+    
+    // Encode une frame avec header binaire
+    // Paramètres:
+    //   - jpeg_data: données JPEG déjà encodées
+    //   - frame_id: ID de la frame
+    //   - width: largeur de l'image
+    //   - height: hauteur de l'image
+    //   - output: buffer de sortie
+    static void encode(const std::vector<uint8_t>& jpeg_data,
+                      uint32_t frame_id,
+                      uint16_t width,
+                      uint16_t height,
+                      std::vector<uint8_t>& output);
+    
+    // Décode un header binaire
+    // Paramètres:
+    //   - data: buffer contenant au moins un header
+    //   - header: structure de sortie
+    // Retourne: true si header valide
+    static bool decodeHeader(const std::vector<uint8_t>& data,
+                            BinaryFrameHeader& header);
+    
+    // Valide un magic number
+    static bool isValidMagic(const char magic[4]);
+    
+private:
+    static uint64_t getCurrentTimestamp();
+};
+
+} // namespace asciivision::network
+```
+
+**Utilité**: Gère l'encodage/décodage du format binaire personnalisé. Sépare cette logique du reste du code réseau.
+
+---
+
+### 2.6 Utils - Utilitaires
+
+#### **ThreadSafeQueue.hpp**
+
+```cpp
+namespace asciivision::utils {
+
+template<typename T>
+class ThreadSafeQueue {
+public:
+    // Constructeur avec capacité maximale
+    explicit ThreadSafeQueue(size_t max_capacity = 0);
+    
+    ~ThreadSafeQueue() = default;
+    
+    // Ajoute un élément (bloque si plein)
+    // Retourne: false si queue fermée
+    bool push(T item);
+    
+    // Ajoute un élément (non-bloquant)
+    // Retourne: false si plein ou fermée
+    bool tryPush(T item);
+    
+    // Retire un élément (bloque si vide)
+    // Retourne: false si queue fermée et vide
+    bool pop(T& item);
+    
+    // Retire un élément (non-bloquant)
+    // Retourne: false si vide
+    bool tryPop(T& item);
+    
+    // Retire un élément avec timeout
+    // Paramètres:
+    //   - item: référence de sortie
+    //   - timeout: durée maximale d'attente
+    // Retourne: false si timeout ou queue fermée
+    template<typename Rep, typename Period>
+    bool popFor(T& item, const std::chrono::duration<Rep, Period>& timeout);
+    
+    // Retourne le nombre d'éléments
+    size_t size() const;
+    
+    // Retourne true si vide
+    bool empty() const;
+    
+    // Retourne la capacité maximale (0 = illimitée)
+    size_t capacity() const;
+    
+    // Ferme la queue (débloque tous les threads en attente)
+    void close();
+    
+    // Retourne true si fermée
+    bool isClosed() const;
+    
+    // Vide la queue
+    void clear();
+    
+private:
+    std::queue<T> queue_;
+    size_t max_capacity_;
+    mutable std::mutex mutex_;
+    std::condition_variable cv_not_empty_;
+    std::condition_variable cv_not_full_;
+    std::atomic<bool> closed_{false};
+};
+
+} // namespace asciivision::utils
+```
+
+**Utilité**: Queue thread-safe avec backpressure. Essentielle pour le modèle multi-thread sans mutex dans le code métier.
+
+---
+
+#### **Logger.hpp**
+
+```cpp
+namespace asciivision::utils {
+
+enum class LogLevel {
+    DEBUG,
+    INFO,
+    WARNING,
+    ERROR,
+    CRITICAL
+};
+
+class Logger {
+public:
+    // Singleton
+    static Logger& instance();
+    
+    // Configure le logger
+    void setLogLevel(LogLevel level);
+    void setOutputFile(const std::string& filepath);
+    void enableConsoleOutput(bool enable);
+    void enableTimestamp(bool enable);
+    
+    // Log un message
+    void log(LogLevel level, const std::string& message);
+    void log(LogLevel level, const std::string& category, const std::string& message);
+    
+    // Méthodes de convenance
+    void debug(const std::string& message);
+    void info(const std::string& message);
+    void warning(const std::string& message);
+    void error(const std::string& message);
+    void critical(const std::string& message);
+    
+    // Log avec formatage (variadic template)
+    template<typename... Args>
+    void logf(LogLevel level, const std::string& format, Args&&... args);
+    
+private:
+    Logger() = default;
+    
+    LogLevel min_level_;
+    bool console_output_;
+    bool timestamp_enabled_;
+    std::ofstream file_stream_;
+    mutable std::mutex log_mutex_;
+    
+    std::string formatMessage(LogLevel level, 
+                              const std::string& category,
+                              const std::string& message) const;
+    std::string getLevelString(LogLevel level) const;
+    std::string getCurrentTimestamp() const;
+};
+
+// Macros de convenance
+#define LOG_DEBUG(msg) asciivision::utils::Logger::instance().debug(msg)
+#define LOG_INFO(msg) asciivision::utils::Logger::instance().info(msg)
+#define LOG_WARNING(msg) asciivision::utils::Logger::instance().warning(msg)
+#define LOG_ERROR(msg) asciivision::utils::Logger::instance().error(msg)
+#define LOG_CRITICAL(msg) asciivision::utils::Logger::instance().critical(msg)
+
+} // namespace asciivision::utils
+```
+
+**Utilité**: Système de logging centralisé. Indispensable pour le debug et le monitoring en production.
+
+---
+
+#### **PerformanceMonitor.hpp**
+
+```cpp
+namespace asciivision::utils {
+
+// Statistiques de performance pour une métrique
+struct PerformanceStats {
+    double min_value;
+    double max_value;
+    double avg_value;
+    double current_value;
+    size_t sample_count;
+};
+
+class PerformanceMonitor {
+public:
+    PerformanceMonitor();
+    ~PerformanceMonitor() = default;
+    
+    // Enregistre une mesure
+    // Paramètres:
+    //   - metric_name: nom de la métrique
+    //   - value: valeur mesurée
+    void recordMetric(const std::string& metric_name, double value);
+    
+    // Enregistre une durée (helper pour chrono)
+    template<typename Rep, typename Period>
+    void recordDuration(const std::string& metric_name,
+                       const std::chrono::duration<Rep, Period>& duration);
+    
+    // Retourne les stats d'une métrique
+    PerformanceStats getStats(const std::string& metric_name) const;
+    
+    // Retourne toutes les stats sous forme JSON
+    nlohmann::json getAllStats() const;
+    
+    // Reset une métrique
+    void resetMetric(const std::string& metric_name);
+    
+    // Reset toutes les métriques
+    void resetAll();
+    
+    // Active/désactive le monitoring
+    void setEnabled(bool enabled);
+    bool isEnabled() const;
+    
+    // Scopeguard pour mesurer automatiquement une durée
+    class ScopedTimer {
+    public:
+        ScopedTimer(PerformanceMonitor& monitor, const std::string& metric_name);
+        ~ScopedTimer();
+        
+    private:
+        PerformanceMonitor& monitor_;
+        std::string metric_name_;
+        std::chrono::steady_clock::time_point start_;
+    };
+    
+private:
+    struct MetricData {
+        double min;
+        double max;
+        double sum;
+        double current;
+        size_t count;
+    };
+    
+    std::unordered_map<std::string, MetricData> metrics_;
+    mutable std::mutex metrics_mutex_;
+    std::atomic<bool> enabled_{true};
+};
+
+// Macro pour mesurer automatiquement
+#define PERF_SCOPE(monitor, name) \
+    asciivision::utils::PerformanceMonitor::ScopedTimer \
+        perf_timer_##__LINE__(monitor, name)
+
+} // namespace asciivision::utils
+```
+
+**Utilité**: Mesure et agrège les métriques de performance. Permet d'identifier les goulots d'étranglement.
+
+---
+
+### 2.7 Main - Point d'entrée
+
+#### **main.cpp**
+
+```cpp
+#include "core/VideoSource.hpp"
+#include "core/WebcamSource.hpp"
+#include "filters/FilterRegistry.hpp"
+#include "filters/GrayscaleFilter.hpp"
+#include "filters/ResizeFilter.hpp"
+#include "filters/AsciiFilter.hpp"
+#include "processing/FrameController.hpp"
+#include "network/WebSocketServer.hpp"
+#include "network/MessageHandler.hpp"
+#include "utils/Logger.hpp"
+
+namespace av = asciivision;
+
+int main(int argc, char* argv[]) {
+    try {
+        // Configuration du logger
+        auto& logger = av::utils::Logger::instance();
+        logger.setLogLevel(av::utils::LogLevel::INFO);
+        logger.enableConsoleOutput(true);
+        logger.enableTimestamp(true);
+        
+        LOG_INFO("AsciiVision starting...");
+        
+        // Enregistrement des filtres
+        auto& registry = av::filters::FilterRegistry::instance();
+        registry.registerFilter("grayscale", 
+            []() { return std::make_unique<av::filters::GrayscaleFilter>(); });
+        registry.registerFilter("resize",
+            []() { return std::make_unique<av::filters::ResizeFilter>(); });
+        registry.registerFilter("ascii",
+            []() { return std::make_unique<av::filters::AsciiFilter>(); });
+        
+        // Création du contrôleur
+        av::processing::FrameController controller;
+        
+        // Création du serveur WebSocket
+        uint16_t port = 9002;
+        av::network::WebSocketServer ws_server(port);
+        av::network::MessageHandler msg_handler;
+        
+        // Configuration du callback de frames
+        controller.setFrameCallback([&ws_server](const std::vector<uint8_t>& frame_data, 
+                                                  uint32_t frame_id) {
+            ws_server.broadcastBinary(frame_data);
+        });
+        
+        // Configuration des handlers de commandes
+        msg_handler.registerCommandHandler("start_engine",
+            [&controller](const nlohmann::json& payload) {
+                // Parse la config et démarre
+                auto source = std::make_unique<av::core::WebcamSource>(0);
+                controller.start(std::move(source), 30.0);
+                
+                // Configure le pipeline
+                auto& pipeline = controller.getPipeline();
+                pipeline.addFilter(std::make_unique<av::filters::ResizeFilter>(160, 120));
+                pipeline.addFilter(std::make_unique<av::filters::GrayscaleFilter>());
+                pipeline.addFilter(std::make_unique<av::filters::AsciiFilter>());
+            });
+        
+        msg_handler.registerCommandHandler("stop_engine",
+            [&controller](const nlohmann::json& payload) {
+                controller.stop();
+            });
+        
+        msg_handler.registerCommandHandler("set_parameter",
+            [&controller](const nlohmann::json& payload) {
+                std::string filter_name = payload["filter"];
+                std::string param_name = payload["parameter"];
+                auto value = payload["value"];
+                
+                controller.getPipeline().updateFilterParameter(
+                    filter_name, param_name, value);
+            });
+        
+        // Configuration du serveur WebSocket
+        ws_server.setMessageCallback([&msg_handler, &ws_server]
+                                     (websocketpp::connection_hdl hdl, 
+                                      const std::string& message) {
+            std::string response = msg_handler.handleMessage(message);
+            if (!response.empty()) {
+                ws_server.sendText(hdl, response);
+            }
+        });
+        
+        ws_server.setConnectionCallback([](websocketpp::connection_hdl hdl) {
+            LOG_INFO("Client connected");
+        });
+        
+        ws_server.setDisconnectionCallback([&controller]
+                                           (websocketpp::connection_hdl hdl) {
+            LOG_INFO("Client disconnected");
+            if (controller.getState() == av::processing::EngineState::RUNNING) {
+                controller.stop();
+            }
+        });
+        
+        // Démarrage du serveur
+        LOG_INFO("Starting WebSocket server on port " + std::to_string(port));
+        ws_server.start();
+        
+        // Boucle principale (attend Ctrl+C)
+        LOG_INFO("AsciiVision ready. Press Ctrl+C to quit.");
+        std::cin.get();
+        
+        // Arrêt propre
+        LOG_INFO("Shutting down...");
+        controller.stop();
+        ws_server.stop();
+        
+        LOG_INFO("AsciiVision stopped.");
+        return 0;
+        
+    } catch (const std::exception& e) {
+        LOG_CRITICAL(std::string("Fatal error: ") + e.what());
+        return 1;
+    }
+}
+```
+
+**Utilité**: Point d'entrée du backend. Initialise tous les composants, configure les callbacks, gère le cycle de vie de l'application.
+
+---
+
+## 3. Frontend - Spécifications des Composants
+
+### 3.1 Types TypeScript
+
+#### **types/protocol.ts**
+
+```typescript
+// Version du protocole
+export const PROTOCOL_VERSION = "1.0";
+
+// Types de messages
+export enum MessageType {
+  START_ENGINE = "start_engine",
+  STOP_ENGINE = "stop_engine",
+  UPDATE_FILTERS = "update_filters",
+  SET_PARAMETER = "set_parameter",
+  GET_CAPABILITIES = "get_capabilities",
+  GET_STATUS = "get_status",
+  
+  ENGINE_STATUS = "engine_status",
+  ERROR = "error",
+  CAPABILITIES = "capabilities",
+  ACK = "acknowledgement",
+  FRAME = "frame",
+}
+
+// Codes d'erreur
+export enum ErrorCode {
+  INVALID_MESSAGE = "INVALID_MESSAGE",
+  UNKNOWN_COMMAND = "UNKNOWN_COMMAND",
+  SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE",
+  ALREADY_RUNNING = "ALREADY_RUNNING",
+  NOT_RUNNING = "NOT_RUNNING",
+  FILTER_NOT_FOUND = "FILTER_NOT_FOUND",
+  INVALID_PARAMETER = "INVALID_PARAMETER",
+  ENCODING_ERROR = "ENCODING_ERROR",
+  INTERNAL_ERROR = "INTERNAL_ERROR",
+}
+
+// Structure de base d'un message
+export interface BaseMessage {
+  version: string;
+  type: MessageType;
+  timestamp: number;
+  payload: Record<string, any>;
+}
+
+// Configuration de source
+export interface SourceConfig {
+  device_id?: number;
+  width?: number;
+  height?: number;
+  fps?: number;
+  path?: string;
+}
+
+// Configuration de filtre
+export interface FilterConfig {
+  name: string;
+  enabled: boolean;
+  params: Record<string, any>;
+}
+
+// Commande start_engine
+export interface StartEngineMessage extends BaseMessage {
+  type: MessageType.START_ENGINE;
+  payload: {
+    source: string;
+    source_config: SourceConfig;
+    pipeline: {
+      target_width: number;
+      target_height: number;
+    };
+  };
+}
+
+// Commande set_parameter
+export interface SetParameterMessage extends BaseMessage {
+  type: MessageType.SET_PARAMETER;
+  payload: {
+    filter: string;
+    parameter: string;
+    value: any;
+  };
+}
+
+// Message de statut
+export interface EngineStatusMessage extends BaseMessage {
+  type: MessageType.ENGINE_STATUS;
+  payload: {
+    state: string;
+    fps: number;
+    frame_count: number;
+    latency_ms: number;
+    dropped_frames: number;
+  };
+}
+
+// Message d'erreur
+export interface ErrorMessage extends BaseMessage {
+  type: MessageType.ERROR;
+  payload: {
+    code: ErrorCode;
+    message: string;
+    recoverable: boolean;
+  };
+}
+
+// Frame vidéo (MVP avec Base64)
+export interface FrameMessageMVP extends BaseMessage {
+  type: MessageType.FRAME;
+  frame_id: number;
+  timestamp: number;
+  width: number;
+  height: number;
+  format: "jpeg";
+  data: string; // Base64
+}
+
+// Frame vidéo binaire (production)
+export interface BinaryFrameHeader {
+  magic: string; // "AVIS"
+  version: number;
+  frameId: number;
+  timestamp: number;
+  width: number;
+  height: number;
+}
+
+export interface VideoFrame {
+  frameId: number;
+  timestamp: number;
+  width: number;
+  height: number;
+  jpegData: ArrayBuffer;
+}
+```
+
+**Utilité**: Types centralisés pour garantir la cohérence entre frontend et backend.
+
+---
+
+#### **types/filters.ts**
+
+```typescript
+// Type de paramètre
+export enum ParameterType {
+  INT = "int",
+  DOUBLE = "double",
+  STRING = "string",
+  BOOL = "bool",
+  ENUM = "enum",
+}
+
+// Définition d'un paramètre
+export interface FilterParameter {
+  name: string;
+  type: ParameterType;
+  description: string;
+  default: any;
+  min?: number;
+  max?: number;
+  values?: string[]; // Pour les enums
+}
+
+// Métadonnées d'un filtre
+export interface FilterMetadata {
+  name: string;
+  displayName: string;
+  description: string;
+  parameters: FilterParameter[];
+}
+
+// État d'un filtre dans l'UI
+export interface FilterState {
+  name: string;
+  enabled: boolean;
+  parameters: Record<string, any>;
+}
+```
+
+**Utilité**: Types pour gérer la configuration dynamique des filtres.
+
+---
+
+#### **types/engine.ts**
+
+```typescript
+// États du moteur
+export enum EngineState {
+  STOPPED = "stopped",
+  STARTING = "starting",
+  RUNNING = "running",
+  STOPPING = "stopping",
+  ERROR = "error",
+}
+
+// Statistiques du moteur
+export interface EngineStats {
+  state: EngineState;
+  fps: number;
+  frameCount: number;
+  droppedFrames: number;
+  latencyMs: number;
+}
+
+// Capacités du système
+export interface SystemCapabilities {
+  sources: string[];
+  filters: FilterMetadata[];
+}
+```
+
+**Utilité**: Types pour l'état global de l'application.
+
+---
+
+### 3.2 Hooks personnalisés
+
+#### **hooks/useWebSocket.ts**
+
+```typescript
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { BaseMessage, VideoFrame } from '@/types/protocol';
+
+interface UseWebSocketOptions {
+  url: string;
+  onMessage?: (message: BaseMessage) => void;
+  onBinaryFrame?: (frame: VideoFrame) => void;
+  onError?: (error: Event) => void;
+  reconnect?: boolean;
+  reconnectInterval?: number;
+}
+
+interface UseWebSocketReturn {
+  connected: boolean;
+  send: (message: BaseMessage) => void;
+  close: () => void;
+}
+
+export function useWebSocket(options: UseWebSocketOptions): UseWebSocketReturn {
+  const {
+    url,
+    onMessage,
+    onBinaryFrame,
+    onError,
+    reconnect = true,
+    reconnectInterval = 3000,
+  } = options;
+
+  const [connected, setConnected] = useState(false);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
+
+  const connect = useCallback(() => {
+    try {
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        console.log('[WebSocket] Connected');
+        setConnected(true);
+      };
+
+      ws.onclose = () => {
+        console.log('[WebSocket] Disconnected');
+        setConnected(false);
+
+        if (reconnect) {
+          reconnectTimeoutRef.current = setTimeout(connect, reconnectInterval);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('[WebSocket] Error:', error);
+        onError?.(error);
+      };
+
+      ws.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          // Message de contrôle JSON
+          try {
+            const message: BaseMessage = JSON.parse(event.data);
+            onMessage?.(message);
+          } catch (e) {
+            console.error('[WebSocket] Failed to parse JSON:', e);
+          }
+        } else if (event.data instanceof Blob) {
+          // Message binaire
+          event.data.arrayBuffer().then((buffer) => {
+            try {
+              const frame = parseBinaryFrame(buffer);
+              onBinaryFrame?.(frame);
+            } catch (e) {
+              console.error('[WebSocket] Failed to parse binary frame:', e);
+            }
+          });
+        }
+      };
+    } catch (error) {
+      console.error('[WebSocket] Connection failed:', error);
+    }
+  }, [url, onMessage, onBinaryFrame, onError, reconnect, reconnectInterval]);
+
+  useEffect(() => {
+    connect();
+
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      wsRef.current?.close();
+    };
+  }, [connect]);
+
+  const send = useCallback((message: BaseMessage) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(message));
+    } else {
+      console.warn('[WebSocket] Cannot send, not connected');
+    }
+  }, []);
+
+  const close = useCallback(() => {
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+    }
+    wsRef.current?.close();
+  }, []);
+
+  return { connected, send, close };
+}
+
+// Parse le format binaire
+function parseBinaryFrame(buffer: ArrayBuffer): VideoFrame {
+  const view = new DataView(buffer);
+
+  // Vérification magic number
+  const magic = String.fromCharCode(
+    view.getUint8(0),
+    view.getUint8(1),
+    view.getUint8(2),
+    view.getUint8(3)
+  );
+
+  if (magic !== 'AVIS') {
+    throw new Error('Invalid frame magic number');
+  }
+
+  // Lecture header
+  const version = view.getUint16(4, true);
+  const frameId = view.getUint32(6, true);
+  const timestamp = Number(view.getBigUint64(10, true));
+  const width = view.getUint16(18, true);
+  const height = view.getUint16(20, true);
+
+  // Extraction des données JPEG
+  const jpegData = buffer.slice(24);
+
+  return {
+    frameId,
+    timestamp,
+    width,
+    height,
+    jpegData,
+  };
+}
+```
+
+**Utilité**: Encapsule toute la logique WebSocket. Gère la connexion, reconnexion, parsing des messages.
+
+---
+
+#### **hooks/useVideoStream.ts**
+
+```typescript
+import { useState, useCallback } from 'react';
+import { useWebSocket } from './useWebSocket';
+import { VideoFrame, BaseMessage, MessageType } from '@/types/protocol';
+
+export function useVideoStream(url: string) {
+  const [lastFrame, setLastFrame] = useState<VideoFrame | null>(null);
+  const [frameRate, setFrameRate] = useState(0);
+
+  const handleBinaryFrame = useCallback((frame: VideoFrame) => {
+    setLastFrame(frame);
+
+    // Calcul du FPS (moyenne glissante)
+    // Implementation simplifiée, à améliorer
+  }, []);
+
+  const handleMessage = useCallback((message: BaseMessage) => {
+    // Gestion des messages de contrôle si nécessaire
+    if (message.type === MessageType.ENGINE_STATUS) {
+      setFrameRate(message.payload.fps);
+    }
+  }, []);
+
+  const { connected, send } = useWebSocket({
+    url,
+    onBinaryFrame: handleBinaryFrame,
+    onMessage: handleMessage,
+  });
+
+  return {
+    connected,
+    lastFrame,
+    frameRate,
+    send,
+  };
+}
+```
+
+**Utilité**: Hook spécialisé pour le flux vidéo. Simplifie l'utilisation dans les composants.
+
+---
+
+#### **hooks/useEngineControl.ts**
+
+```typescript
+import { useState, useCallback } from 'react';
+import { useWebSocket } from './useWebSocket';
+import {
+  BaseMessage,
+  MessageType,
+  EngineState,
+  EngineStats,
+  ErrorMessage,
+  PROTOCOL_VERSION,
+} from '@/types/protocol';
+
+export function useEngineControl(url: string) {
+  const [engineState, setEngineState] = useState<EngineState>(EngineState.STOPPED);
+  const [engineStats, setEngineStats] = useState<EngineStats | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+
+  const handleMessage = useCallback((message: BaseMessage) => {
+    switch (message.type) {
+      case MessageType.ENGINE_STATUS:
+        setEngineState(message.payload.state as EngineState);
+        setEngineStats({
+          state: message.payload.state,
+          fps: message.payload.fps,
+          frameCount: message.payload.frame_count,
+          droppedFrames: message.payload.dropped_frames,
+          latencyMs: message.payload.latency_ms,
+        });
+        break;
+
+      case MessageType.ERROR:
+        const errorMsg = message as ErrorMessage;
+        setLastError(errorMsg.payload.message);
+        if (!errorMsg.payload.recoverable) {
+          setEngineState(EngineState.ERROR);
+        }
+        break;
+    }
+  }, []);
+
+  const { connected, send }   = useWebSocket({
+    url,
+    onMessage: handleMessage,
+  });
+
+  const startEngine = useCallback((sourceType: string = 'webcam') => {
+    send({
+      version: PROTOCOL_VERSION,
+      type: MessageType.START_ENGINE,
+      timestamp: Date.now(),
+      payload: {
+        source: sourceType,
+        source_config: {
+          device_id: 0,
+          width: 640,
+          height: 480,
+          fps: 30,
+        },
+        pipeline: {
+          target_width: 160,
+          target_height: 120,
+        },
+      },
+    });
+  }, [send]);
+
+  const stopEngine = useCallback(() => {
+    send({
+      version: PROTOCOL_VERSION,
+      type: MessageType.STOP_ENGINE,
+      timestamp: Date.now(),
+      payload: {},
+    });
+  }, [send]);
+
+  const setParameter = useCallback(
+    (filter: string, parameter: string, value: any) => {
+      send({
+        version: PROTOCOL_VERSION,
+        type: MessageType.SET_PARAMETER,
+        timestamp: Date.now(),
+        payload: {
+          filter,
+          parameter,
+          value,
+        },
+      });
+    },
+    [send]
+  );
+
+  return {
+    connected,
+    engineState,
+    engineStats,
+    lastError,
+    startEngine,
+    stopEngine,
+    setParameter,
+  };
+}
+```
+
+**Utilité**: Hook pour contrôler le moteur backend. Encapsule toute la logique de commande.
+
+---
+
+### 3.3 Composants React
+
+#### **components/VideoCanvas.tsx**
+
+```typescript
+'use client';
+
+import { useEffect, useRef } from 'react';
+import { VideoFrame } from '@/types/protocol';
+
+interface VideoCanvasProps {
+  frame: VideoFrame | null;
+  className?: string;
+}
+
+export function VideoCanvas({ frame, className = '' }: VideoCanvasProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!frame || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Créer un Blob depuis les données JPEG
+    const blob = new Blob([frame.jpegData], { type: 'image/jpeg' });
+    const url = URL.createObjectURL(blob);
+
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = frame.width;
+      canvas.height = frame.height;
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      console.error('[VideoCanvas] Failed to load frame');
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  }, [frame]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      className={`border border-gray-300 ${className}`}
+      style={{ imageRendering: 'pixelated' }}
+    />
+  );
+}
+```
+
+**Utilité**: Composant d'affichage vidéo. Décode et affiche les frames JPEG sur un canvas.
+
+---
+
+#### **components/ControlPanel.tsx**
+
+```typescript
+'use client';
+
+import { EngineState } from '@/types/protocol';
+
+interface ControlPanelProps {
+  engineState: EngineState;
+  connected: boolean;
+  onStart: () => void;
+  onStop: () => void;
+}
+
+export function ControlPanel({
+  engineState,
+  connected,
+  onStart,
+  onStop,
+}: ControlPanelProps) {
+  const isRunning = engineState === EngineState.RUNNING;
+  const canStart = connected && engineState === EngineState.STOPPED;
+  const canStop = connected && isRunning;
+
+  return (
+    <div className="flex gap-4 items-center p-4 bg-white rounded-lg shadow">
+      <div className="flex items-center gap-2">
+        <div
+          className={`w-3 h-3 rounded-full ${
+            connected ? 'bg-green-500' : 'bg-red-500'
+          }`}
+        />
+        <span className="text-sm font-medium">
+          {connected ? 'Connected' : 'Disconnected'}
+        </span>
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          onClick={onStart}
+          disabled={!canStart}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+        >
+          Start
+        </button>
+
+        <button
+          onClick={onStop}
+          disabled={!canStop}
+          className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+        >
+          Stop
+        </button>
+      </div>
+
+      <div className="ml-auto">
+        <span className="text-sm text-gray-600">
+          State: <span className="font-semibold">{engineState}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+```
+
+**Utilité**: Panneau de contrôle principal. Boutons start/stop et affichage du statut.
+
+---
+
+#### **components/FilterControls.tsx**
+
+```typescript
+'use client';
+
+import { useState } from 'react';
+
+interface FilterControlsProps {
+  onParameterChange: (filter: string, parameter: string, value: any) => void;
+}
+
+export function FilterControls({ onParameterChange }: FilterControlsProps) {
+  const [charset, setCharset] = useState('standard');
+  const [invert, setInvert] = useState(false);
+  const [contrast, setContrast] = useState(1.0);
+
+  const handleCharsetChange = (newCharset: string) => {
+    setCharset(newCharset);
+    onParameterChange('ascii', 'charset', newCharset);
+  };
+
+  const handleInvertChange = (newInvert: boolean) => {
+    setInvert(newInvert);
+    onParameterChange('ascii', 'invert', newInvert);
+  };
+
+  const handleContrastChange = (newContrast: number) => {
+    setContrast(newContrast);
+    onParameterChange('ascii', 'contrast', newContrast);
+  };
+
+  return (
+    <div className="p-4 bg-white rounded-lg shadow space-y-4">
+      <h3 className="font-semibold text-lg">ASCII Filter</h3>
+
+      {/* Charset selector */}
+      <div>
+        <label className="block text-sm font-medium mb-2">Charset</label>
+        <select
+          value={charset}
+          onChange={(e) => handleCharsetChange(e.target.value)}
+          className="w-full px-3 py-2 border rounded"
+        >
+          <option value="minimal">Minimal</option>
+          <option value="standard">Standard</option>
+          <option value="extended">Extended</option>
+          <option value="blocks">Blocks</option>
+        </select>
+      </div>
+
+      {/* Invert toggle */}
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="invert"
+          checked={invert}
+          onChange={(e) => handleInvertChange(e.target.checked)}
+          className="w-4 h-4"
+        />
+        <label htmlFor="invert" className="text-sm font-medium">
+          Invert
+        </label>
+      </div>
+
+      {/* Contrast slider */}
+      <div>
+        <label className="block text-sm font-medium mb-2">
+          Contrast: {contrast.toFixed(2)}
+        </label>
+        <input
+          type="range"
+          min="0.5"
+          max="2.0"
+          step="0.1"
+          value={contrast}
+          onChange={(e) => handleContrastChange(parseFloat(e.target.value))}
+          className="w-full"
+        />
+      </div>
+    </div>
+  );
+}
+```
+
+**Utilité**: Contrôles pour ajuster les paramètres des filtres en temps réel.
+
+---
+
+#### **components/StatusBar.tsx**
+
+```typescript
+'use client';
+
+import { EngineStats } from '@/types/engine';
+
+interface StatusBarProps {
+  stats: EngineStats | null;
+}
+
+export function StatusBar({ stats }: StatusBarProps) {
+  if (!stats) {
+    return (
+      <div className="p-2 bg-gray-100 text-sm text-gray-500">
+        No stats available
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-2 bg-gray-100 flex gap-6 text-sm">
+      <div>
+        <span className="font-medium">FPS:</span>{' '}
+        <span className="font-mono">{stats.fps.toFixed(1)}</span>
+      </div>
+      <div>
+        <span className="font-medium">Frames:</span>{' '}
+        <span className="font-mono">{stats.frameCount}</span>
+      </div>
+      <div>
+        <span className="font-medium">Dropped:</span>{' '}
+        <span className="font-mono">{stats.droppedFrames}</span>
+      </div>
+      <div>
+        <span className="font-medium">Latency:</span>{' '}
+        <span className="font-mono">{stats.latencyMs.toFixed(1)}ms</span>
+      </div>
+    </div>
+  );
+}
+```
+
+**Utilité**: Barre de statut affichant les métriques de performance en temps réel.
+
+---
+
+#### **components/ErrorDisplay.tsx**
+
+```typescript
+'use client';
+
+interface ErrorDisplayProps {
+  error: string | null;
+  onDismiss: () => void;
+}
+
+export function ErrorDisplay({ error, onDismiss }: ErrorDisplayProps) {
+  if (!error) return null;
+
+  return (
+    <div className="fixed top-4 right-4 max-w-md p-4 bg-red-100 border border-red-400 rounded-lg shadow-lg">
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0">
+          <svg
+            className="w-5 h-5 text-red-600"
+            fill="currentColor"
+            viewBox="0 0 20 20"
+          >
+            <path
+              fillRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
+              clipRule="evenodd"
+            />
+          </svg>
+        </div>
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-red-800">Error</h3>
+          <p className="mt-1 text-sm text-red-700">{error}</p>
+        </div>
+        <button
+          onClick={onDismiss}
+          className="flex-shrink-0 text-red-600 hover:text-red-800"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+```
+
+**Utilité**: Affiche les erreurs de manière non-intrusive. Dismissable par l'utilisateur.
+
+---
+
+#### **app/page.tsx** (Page principale)
+
+```typecript
+'use client';
+
+import { useState } from 'react';
+import { VideoCanvas } from '@/components/VideoCanvas';
+import { ControlPanel } from '@/components/ControlPanel';
+import { FilterControls } from '@/components/FilterControls';
+import { StatusBar } from '@/components/StatusBar';
+import { ErrorDisplay } from '@/components/ErrorDisplay';
+import { useVideoStream } from '@/hooks/useVideoStream';
+import { useEngineControl } from '@/hooks/useEngineControl';
+
+const WS_URL = 'ws://localhost:9002';
+
+export default function Home() {
+  const { lastFrame } = useVideoStream(WS_URL);
+  const {
+    connected,
+    engineState,
+    engineStats,
+    lastError,
+    startEngine,
+    stopEngine,
+    setParameter,
+  } = useEngineControl(WS_URL);
+
+  const [errorDismissed, setErrorDismissed] = useState(false);
+
+  return (
+    <main className="min-h-screen bg-gray-50 p-8">
+      <div className="max-w-7xl mx-auto space-y-6">
+        <header>
+          <h1 className="text-3xl font-bold text-gray-900">AsciiVision</h1>
+          <p className="text-gray-600 mt-1">
+            Real-time video processing with ASCII art rendering
+          </p>
+        </header>
+
+        <ControlPanel
+          engineState={engineState}
+          connected={connected}
+          onStart={() => startEngine('webcam')}
+          onStop={stopEngine}
+        />
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <div className="bg-white rounded-lg shadow p-4">
+              <VideoCanvas
+                frame={lastFrame}
+                className="w-full h-auto"
+              />
+            </div>
+            <StatusBar stats={engineStats} />
+          </div>
+
+          <div>
+            <FilterControls onParameterChange={setParameter} />
+          </div>
+        </div>
+
+        <ErrorDisplay
+          error={errorDismissed ? null : lastError}
+          onDismiss={() => setErrorDismissed(true)}
+        />
+      </div>
+    </main>
+  );
+}
+```
+
+**Utilité**: Page principale assemblant tous les composants. Point d'entrée de l'UI.
+
+---
+
+## 4. Récapitulatif - Ordre d'implémentation
+
+### Phase 1: Backend minimal fonctionnel
+1. `VideoSource.hpp` + `WebcamSource.cpp`
+2. `IFilter.hpp`
+3. `GrayscaleFilter.cpp`
+4. `AsciiFilter.cpp`
+5. `FramePipeline.cpp`
+6. `FrameController.cpp` (version simple, 1 thread)
+7. `main.cpp` (test console sans réseau)
+
+### Phase 2: Réseau
+8. `WebSocketServer.cpp`
+9. `MessageHandler.cpp`
+10. `ProtocolTypes.hpp`
+11. Intégration dans `main.cpp`
+
+### Phase 3: Frontend MVP
+12. `types/protocol.ts`
+13. `hooks/useWebSocket.ts`
+14. `components/VideoCanvas.tsx`
+15. `components/ControlPanel.tsx`
+16. `app/page.tsx`
+
+### Phase 4: Features complètes
+17. `FilterRegistry.cpp`
+18. Filtres additionnels (Blur, Resize, etc.)
+19. `hooks/useEngineControl.ts`
+20. `components/FilterControls.tsx`
+21. `components/StatusBar.tsx`
+
+### Phase 5: Optimisations
+22. `ThreadSafeQueue.hpp`
+23. `FrameController.cpp` (multi-thread)
+24. `BinaryFrameEncoder.cpp`
+25. Migration protocole binaire
+
+### Phase 6: Utilitaires et polish
+26. `Logger.cpp`
+27. `PerformanceMonitor.cpp`
+28. `ErrorDisplay.tsx`
+29. Tests unitaires
+30. Documentation
+
+---
 
 
+## 📐 Architecture Globale Complète
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            FRONTEND (Navigateur)                            │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                      Interface Utilisateur                            │ │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐  │ │
+│  │  │  Sélection   │  │   Contrôle   │  │   Configuration Pipeline  │  │ │
+│  │  │   Source     │  │  Start/Stop  │  │   (Filtres actifs)       │  │ │
+│  │  │              │  │              │  │                           │  │ │
+│  │  │ • Webcam     │  │ • Démarrer   │  │ ☐ Grayscale              │  │ │
+│  │  │   client     │  │ • Arrêter    │  │ ☐ Blur                   │  │ │
+│  │  │ • Webcam     │  │ • Pause      │  │ ☐ Edge Detection         │  │ │
+│  │  │   serveur    │  │              │  │ ☐ Face Detection         │  │ │
+│  │  │ • Image      │  │              │  │ ☐ ASCII Render           │  │ │
+│  │  │ • Séquence   │  │              │  │ ☐ Custom Filter          │  │ │
+│  │  └──────────────┘  └──────────────┘  └───────────────────────────┘  │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     Canvas d'affichage                                │ │
+│  │  • Affiche le résultat du pipeline                                    │ │
+│  │  • Peut être : image brute, contours, visages détectés, ASCII, etc.  │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     Barre de Statut                                   │ │
+│  │  FPS: 28.5 | Frames: 1247 | Latence: 45ms | Dropped: 3               │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     Couche WebSocket                                  │ │
+│  │  • Envoi : Commandes JSON (start, configure, set_parameter)          │ │
+│  │  • Envoi : Frames binaires (si mode webcam client)                   │ │
+│  │  • Réception : Résultats traités (binaire JPEG/PNG)                  │ │
+│  │  • Réception : Statuts et erreurs (JSON)                             │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↕
+                          WebSocket (port 9002)
+                                    ↕
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            BACKEND C++                                      │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     WebSocketServer                                   │ │
+│  │  • Accepte connexions clients multiples                               │ │
+│  │  • Reçoit commandes JSON                                              │ │
+│  │  • Reçoit frames binaires (NetworkSource)                             │ │
+│  │  • Broadcast résultats à tous les clients                             │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                    ↓                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     MessageHandler                                    │ │
+│  │  • Parse et valide messages JSON                                      │ │
+│  │  • Dispatch vers handlers appropriés                                  │ │
+│  │  • Génère réponses formatées                                          │ │
+│  │  • Gère les erreurs protocole                                         │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                    ↓                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     FrameController (Orchestrateur)                   │ │
+│  │  • Gère cycle de vie (start/stop/pause)                               │ │
+│  │  • Coordonne : Source → Pipeline → Encoder → Output                   │ │
+│  │  • Threading et synchronisation                                       │ │
+│  │  • Collecte statistiques (FPS, latence, dropped frames)               │ │
+│  │  • Régulation FPS cible                                               │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                    ↓                                        │
+│  ┌─────────────────────────────┐                                           │
+│  │      VIDEO SOURCES          │                                           │
+│  │  (Interface VideoSource)    │                                           │
+│  │                             │                                           │
+│  │  ┌───────────────────────┐  │                                           │
+│  │  │  WebcamSource         │  │ ← Webcam du serveur (OpenCV)             │
+│  │  │  - device_id          │  │                                           │
+│  │  │  - résolution         │  │                                           │
+│  │  │  - FPS natif          │  │                                           │
+│  │  └───────────────────────┘  │                                           │
+│  │                             │                                           │
+│  │  ┌───────────────────────┐  │                                           │
+│  │  │  NetworkSource        │  │ ← Frames depuis le client via WebSocket  │
+│  │  │  - Queue frames       │  │                                           │
+│  │  │  - Décodage JPEG      │  │                                           │
+│  │  │  - Buffer circulaire  │  │                                           │
+│  │  └───────────────────────┘  │                                           │
+│  │                             │                                           │
+│  │  ┌───────────────────────┐  │                                           │
+│  │  │  ImageSource          │  │ ← Image fixe (test/debug)                │
+│  │  │  - path               │  │                                           │
+│  │  │  - loop mode          │  │                                           │
+│  │  └───────────────────────┘  │                                           │
+│  │                             │                                           │
+│  │  ┌───────────────────────┐  │                                           │
+│  │  │  ImageSequenceSource  │  │ ← Séquence d'images (tests)              │
+│  │  │  - directory          │  │                                           │
+│  │  │  - FPS simulé         │  │                                           │
+│  │  └───────────────────────┘  │                                           │
+│  │                             │                                           │
+│  │  ┌───────────────────────┐  │                                           │
+│  │  │  VideoFileSource      │  │ ← Fichier vidéo (future)                 │
+│  │  │  - codec detection    │  │                                           │
+│  │  └───────────────────────┘  │                                           │
+│  └─────────────────────────────┘                                           │
+│                 ↓ readFrame()                                              │
+│            cv::Mat (frame brute)                                           │
+│                 ↓                                                           │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     FramePipeline                                     │ │
+│  │  Pipeline configurable dynamiquement                                  │ │
+│  │                                                                       │ │
+│  │  ┌─────────────────────────────────────────────────────────────────┐ │ │
+│  │  │  Liste ordonnée de filtres (std::vector<IFilter>)              │ │ │
+│  │  │                                                                 │ │ │
+│  │  │  Filtre 1 → Filtre 2 → Filtre 3 → ... → Filtre N               │ │ │
+│  │  │                                                                 │ │ │
+│  │  │  Chaque filtre :                                                │ │ │
+│  │  │  • Peut être activé/désactivé                                   │ │ │
+│  │  │  • A ses propres paramètres                                     │ │ │
+│  │  │  • Est indépendant des autres                                   │ │ │
+│  │  │  • Peut être ajouté/retiré en temps réel                        │ │ │
+│  │  └─────────────────────────────────────────────────────────────────┘ │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                    ↓                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     FILTRES DISPONIBLES                               │ │
+│  │  (Interface IFilter - Extensible à l'infini)                          │ │
+│  │                                                                       │ │
+│  │  📐 Traitement de base :                                              │ │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐    │ │
+│  │  │ ResizeFilter    │  │ GrayscaleFilter │  │ CropFilter       │    │ │
+│  │  │ - width/height  │  │ - no params     │  │ - x,y,w,h        │    │ │
+│  │  │ - interpolation │  │                 │  │                  │    │ │
+│  │  └─────────────────┘  └─────────────────┘  └──────────────────┘    │ │
+│  │                                                                       │ │
+│  │  🎨 Effets & Transformations :                                        │ │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐    │ │
+│  │  │ BlurFilter      │  │ SharpenFilter   │  │ ContrastFilter   │    │ │
+│  │  │ - kernel_size   │  │ - strength      │  │ - level          │    │ │
+│  │  │ - sigma         │  │                 │  │ - brightness     │    │ │
+│  │  └─────────────────┘  └─────────────────┘  └──────────────────┘    │ │
+│  │                                                                       │ │
+│  │  🔍 Computer Vision :                                                 │ │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐    │ │
+│  │  │EdgeDetectionFlt │  │FaceDetectionFlt │  │ObjectDetectFlt   │    │ │
+│  │  │ - threshold1/2  │  │ - cascade file  │  │ - YOLO model     │    │ │
+│  │  │ - aperture      │  │ - min_neighbors │  │ - confidence     │    │ │
+│  │  └─────────────────┘  └─────────────────┘  └──────────────────┘    │ │
+│  │                                                                       │ │
+│  │  🎭 Rendus artistiques :                                              │ │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐    │ │
+│  │  │ AsciiFilter     │  │ CartoonFilter   │  │ PencilSketchFlt  │    │ │
+│  │  │ - charset       │  │ - edge_thresh   │  │ - shade_factor   │    │ │
+│  │  │ - invert        │  │ - bilateral     │  │ - sketch_level   │    │ │
+│  │  │ - contrast      │  │                 │  │                  │    │ │
+│  │  └─────────────────┘  └─────────────────┘  └──────────────────┘    │ │
+│  │                                                                       │ │
+│  │  🤖 IA & Deep Learning (futur) :                                      │ │
+│  │  ┌─────────────────┐  ┌─────────────────┐  ┌──────────────────┐    │ │
+│  │  │ StyleTransferFlt│  │ SuperResolution │  │ SemanticSegment  │    │ │
+│  │  │ - model_path    │  │ - scale_factor  │  │ - num_classes    │    │ │
+│  │  └─────────────────┘  └─────────────────┘  └──────────────────┘    │ │
+│  │                                                                       │ │
+│  │  🔧 Custom :                                                          │ │
+│  │  ┌─────────────────┐                                                 │ │
+│  │  │ CustomFilter    │  ← Utilisateur peut créer ses propres filtres  │ │
+│  │  │ - user_params   │                                                 │ │
+│  │  └─────────────────┘                                                 │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                    ↓                                        │
+│                         cv::Mat (frame traitée)                             │
+│                                    ↓                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     FrameEncoder                                      │ │
+│  │  • Encode en JPEG (qualité configurable)                              │ │
+│  │  • Encode en PNG (lossless si besoin)                                 │ │
+│  │  • Ajoute header binaire (frame_id, timestamp, dimensions)            │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                    ↓                                        │
+│                    std::vector<uint8_t> (buffer binaire)                   │
+│                                    ↓                                        │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                     Callback vers WebSocket                           │ │
+│  │  • Envoie au(x) client(s) connecté(s)                                 │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🔄 Flux de Données Complet
+
+### Cas 1 : Mode Webcam Client (NetworkSource)
+
+```
+┌─────────────────┐
+│  NAVIGATEUR     │
+│                 │
+│  getUserMedia() │ ← Accès webcam client
+│       ↓         │
+│  <video>        │ ← Flux vidéo live
+│       ↓         │
+│  captureFrame() │ ← Capture périodique (15 FPS)
+│       ↓         │
+│  Canvas.resize  │ ← Réduit à 320×240
+│       ↓         │
+│  toBlob('jpeg') │ ← Encode JPEG 75%
+│       ↓         │
+│  ArrayBuffer    │ ← ~15-30 KB par frame
+│       ↓         │
+│  WebSocket.send │ ← Envoi binaire
+└────────┬────────┘
+         │ WebSocket (binaire)
+         ↓
+┌─────────────────────────────────────┐
+│  BACKEND                            │
+│                                     │
+│  WebSocketServer::onMessage()      │
+│       ↓                             │
+│  NetworkSource::pushFrame()        │ ← Décode JPEG → cv::Mat
+│       ↓                             │
+│  ThreadSafeQueue<cv::Mat>          │ ← Buffer circulaire
+│       ↓                             │
+│  FrameController::workerLoop()     │
+│       ↓                             │
+│  VideoSource::readFrame()          │ ← Lit depuis queue
+│       ↓                             │
+│  FramePipeline::process()          │
+│       ↓                             │
+│  [Filtre 1] → [Filtre 2] → ...     │ ← Pipeline configurable
+│       ↓                             │
+│  FrameEncoder::encodeJPEG()        │ ← Encode résultat
+│       ↓                             │
+│  Callback                           │ ← Retour vers WebSocket
+│       ↓                             │
+│  WebSocket.send(binary)            │ ← Envoie au client
+└────────┬────────────────────────────┘
+         │ WebSocket (binaire)
+         ↓
+┌─────────────────┐
+│  NAVIGATEUR     │
+│                 │
+│  onmessage()    │ ← Reçoit frame traitée
+│       ↓         │
+│  Blob → Image   │ ← Décode JPEG
+│       ↓         │
+│  Canvas.draw    │ ← Affiche résultat
+└─────────────────┘
+```
+
+**Latence totale :** ~50-100ms (upload + process + download)
+
+---
+
+### Cas 2 : Mode Webcam Serveur (WebcamSource)
+
+```
+┌─────────────────┐
+│  NAVIGATEUR     │
+│                 │
+│  Click "Start"  │
+│       ↓         │
+│  send(JSON)     │ ← {"type": "start_engine", "source": "webcam"}
+└────────┬────────┘
+         │ WebSocket (JSON)
+         ↓
+┌─────────────────────────────────────┐
+│  BACKEND                            │
+│                                     │
+│  MessageHandler::handleMessage()   │
+│       ↓                             │
+│  FrameController::start()          │
+│       ↓                             │
+│  WebcamSource::open()              │ ← OpenCV ouvre webcam SERVEUR
+│       ↓                             │
+│  FrameController::workerLoop()     │
+│       ↓                             │
+│  WebcamSource::readFrame()         │ ← Capture depuis cv::VideoCapture
+│       ↓                             │
+│  FramePipeline::process()          │
+│       ↓                             │
+│  [Filtre 1] → [Filtre 2] → ...     │
+│       ↓                             │
+│  FrameEncoder::encodeJPEG()        │
+│       ↓                             │
+│  WebSocket.send(binary)            │
+└────────┬────────────────────────────┘
+         │ WebSocket (binaire)
+         ↓
+┌─────────────────┐
+│  NAVIGATEUR     │
+│                 │
+│  onmessage()    │
+│       ↓         │
+│  Canvas.draw    │ ← Affiche
+└─────────────────┘
+```
+
+**Latence totale :** ~15-30ms (juste process + download)
+
+---
+
+## 🛠️ Exemples de Configuration Pipeline
+
+### Exemple 1 : Détection de contours (PAS d'ASCII)
+
+**Objectif :** Extraire les contours d'une image en temps réel
+
+```json
+{
+  "type": "start_engine",
+  "version": "1.0",
+  "timestamp": 1703001234567,
+  "payload": {
+    "source": "network",
+    "source_config": {
+      "expected_fps": 15
+    },
+    "pipeline": {
+      "filters": [
+        {
+          "name": "resize",
+          "enabled": true,
+          "params": {
+            "width": 640,
+            "height": 480,
+            "interpolation": "linear"
+          }
+        },
+        {
+          "name": "grayscale",
+          "enabled": true,
+          "params": {}
+        },
+        {
+          "name": "blur",
+          "enabled": true,
+          "params": {
+            "kernel_size": 5,
+            "sigma": 1.5
+          }
+        },
+        {
+          "name": "edge_detection",
+          "enabled": true,
+          "params": {
+            "threshold1": 50,
+            "threshold2": 150,
+            "aperture_size": 3
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+**Résultat :** Image en noir et blanc avec contours détectés (algorithme Canny)
+
+---
+
+### Exemple 2 : Détection de visages (Computer Vision)
+
+**Objectif :** Détecter et encadrer les visages dans la vidéo
+
+```json
+{
+  "type": "start_engine",
+  "version": "1.0",
+  "timestamp": 1703001234567,
+  "payload": {
+    "source": "webcam",
+    "source_config": {
+      "device_id": 0,
+      "width": 1280,
+      "height": 720,
+      "fps": 30
+    },
+    "pipeline": {
+      "filters": [
+        {
+          "name": "face_detection",
+          "enabled": true,
+          "params": {
+            "cascade_file": "haarcascade_frontalface_default.xml",
+            "scale_factor": 1.1,
+            "min_neighbors": 5,
+            "min_size": 30,
+            "draw_boxes": true,
+            "box_color": [0, 255, 0],
+            "box_thickness": 2
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+**Résultat :** Image originale avec rectangles verts autour des visages
+
+---
+
+### Exemple 3 : ASCII Art (UN cas d'usage parmi d'autres)
+
+**Objectif :** Rendu ASCII artistique
+
+```json
+{
+  "type": "start_engine",
+  "version": "1.0",
+  "timestamp": 1703001234567,
+  "payload": {
+    "source": "network",
+    "source_config": {
+      "expected_fps": 15
+    },
+    "pipeline": {
+      "filters": [
+        {
+          "name": "resize",
+          "enabled": true,
+          "params": {
+            "width": 160,
+            "height": 120
+          }
+        },
+        {
+          "name": "grayscale",
+          "enabled": true,
+          "params": {}
+        },
+        {
+          "name": "contrast",
+          "enabled": true,
+          "params": {
+            "level": 1.5,
+            "brightness": 0
+          }
+        },
+        {
+          "name": "ascii",
+          "enabled": true,
+          "params": {
+            "charset": "extended",
+            "invert": false,
+            "scale": 1.0
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+**Résultat :** Art ASCII
+
+---
+
+### Exemple 4 : Pipeline complexe (Multi-filtres)
+
+**Objectif :** Détection de contours + détection de visages sur la même image
+
+```json
+{
+  "type": "start_engine",
+  "version": "1.0",
+  "timestamp": 1703001234567,
+  "payload": {
+    "source": "network",
+    "pipeline": {
+      "filters": [
+        {
+          "name": "resize",
+          "enabled": true,
+          "params": { "width": 1280, "height": 720 }
+        },
+        {
+          "name": "denoise",
+          "enabled": true,
+          "params": { "strength": 10 }
+        },
+        {
+          "name": "face_detection",
+          "enabled": true,
+          "params": {
+            "draw_boxes": true,
+            "box_color": [255, 0, 0]
+          }
+        },
+        {
+          "name": "edge_detection",
+          "enabled": true,
+          "params": {
+            "threshold1": 100,
+            "threshold2": 200
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+**Résultat :** Image avec visages encadrés ET contours détectés
+
+---
+
+## 🔧 Modifications Nécessaires (Clarifications)
+
+### ❌ Ce qui NE change PAS
+
+L'architecture backend est **déjà flexible** :
+- ✅ `IFilter` interface → n'importe quel filtre
+- ✅ `FramePipeline` → ordre configurable
+- ✅ `VideoSource` → n'importe quelle source
+- ✅ `MessageHandler` → protocole générique
+
+### ✔️ Ce qu'il faut clarifier/ajuster
+
+#### 1. **Renommage conceptuel** (optionnel mais recommandé)
+
+```cpp
+// Au lieu de :
+class AsciiFilter : public IFilter { ... };
+
+// Avoir aussi :
+class EdgeDetectionFilter : public IFilter { ... };
+class FaceDetectionFilter : public IFilter { ... };
+class BlurFilter : public IFilter { ... };
+class ContrastFilter : public IFilter { ... };
+```
+
+#### 2. **Interface utilisateur** - Composant `PipelineBuilder`
+
+Au lieu d'avoir des contrôles spécifiques ASCII, avoir une **interface générique** :
+
+```typescript
+// components/PipelineBuilder.tsx
+interface FilterConfig {
+  name: string;
+  displayName: string;
+  enabled: boolean;
+  parameters: FilterParameter[];
+}
+
+function PipelineBuilder({ 
+  availableFilters, 
+  activeFilters, 
+  onUpdatePipeline 
+}: Props) {
+  // Interface drag & drop pour :
+  // - Ajouter/retirer des filtres
+  // - Réorganiser l'ordre
+  // - Activer/désactiver
+  // - Ajuster paramètres
+}
+```
+
+**Interface visuelle** :
+
+```
+┌────────────────────────────────────────────────────┐
+│  Pipeline Configuration                            │
+├────────────────────────────────────────────────────┤
+│                                                    │
+│  Available Filters:                                │
+│  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐         │
+│  │ Blur │  │Edges │  │Faces │  │ASCII │  ...    │
+│  └──────┘  └──────┘  └──────┘  └──────┘         │
+│                                                    │
+│  Active Pipeline (drag to reorder):                │
+│  ┌────────────────────────────────────────────┐   │
+│  │  1. ☑ Resize          [⚙ Configure]       │   │
+│  │  2. ☑ Grayscale       [⚙ Configure]       │   │
+│  │  3. ☐ Blur            [⚙ Configure]       │   │
+│  │  4. ☑ Edge Detection  [⚙ Configure]       │   │
+│  │  5. ☐ ASCII Render    [⚙ Configure]       │   │
+│  └────────────────────────────────────────────┘   │
+│                                                    │
+│  [Add Filter ▼]  [Clear All]  [Apply Changes]     │
+└────────────────────────────────────────────────────┘
+```
+
+#### 3. **FilterRegistry** - Enregistrement auto des filtres
+
+```cpp
+// filters/GrayscaleFilter.cpp
+REGISTER_FILTER(GrayscaleFilter, "grayscale");
+
+// filters/EdgeDetectionFilter.cpp
+REGISTER_FILTER(EdgeDetectionFilter, "edge_detection");
+
+// filters/FaceDetectionFilter.cpp
+REGISTER_FILTER(FaceDetectionFilter, "face_detection");
+
+// filters/AsciiFilter.cpp
+REGISTER_FILTER(AsciiFilter, "ascii");
+
+// Tous les filtres sont automatiquement disponibles
+```
+
+#### 4. **Message `get_capabilities`** - Liste dynamique
+
+Le frontend demande au backend quels filtres sont disponibles :
+
+**Requête :**
+```json
+{
+  "type": "get_capabilities",
+  "version": "1.0",
+  "timestamp": 1703001234567,
+  "payload": {}
+}
+```
+
+**Réponse :**
+```json
+{
+  "type": "capabilities",
+  "version": "1.0",
+  "timestamp": 1703001234568,
+  "payload": {
+    "sources": [
+      "webcam",
+      "network",
+      "image",
+      "sequence"
+    ],
+    "filters": [
+      {
+        "name": "resize",
+        "display_name": "Resize",
+        "description": "Change image dimensions",
+        "category": "basic",
+        "parameters": [
+          {
+            "name": "width",
+            "type": "int",
+            "default": 640,
+            "min": 64,
+            "max": 1920
+          },
+          {
+            "name": "height",
+            "type": "int",
+            "default": 480,
+            "min": 64,
+            "max": 1080
+          }
+        ]
+      },
+      {
+        "name": "grayscale",
+        "display_name": "Grayscale",
+        "description": "Convert to black & white",
+        "category": "basic",
+        "parameters": []
+      },
+      {
+        "name": "edge_detection",
+        "display_name": "Edge Detection",
+        "description": "Detect edges using Canny algorithm",
+        "category": "computer_vision",
+        "parameters": [
+          {
+            "name": "threshold1",
+            "type": "double",
+            "default": 50,
+            "min": 0,
+            "max": 300
+          },
+          {
+            "name": "threshold2",
+            "type": "double",
+            "default": 150,
+            "min": 0,
+            "max": 300
+          }
+        ]
+      },
+      {
+        "name": "face_detection",
+        "display_name": "Face Detection",
+        "description": "Detect faces using Haar Cascade",
+        "category": "computer_vision",
+        "parameters": [
+          {
+            "name": "draw_boxes",
+            "type": "bool",
+            "default": true
+          },
+          {
+            "name": "min_neighbors",
+            "type": "int",
+            "default": 5,
+            "min": 1,
+            "max": 10
+          }
+        ]
+      },
+      {
+        "name": "ascii",
+        "display_name": "ASCII Art",
+        "description": "Render as ASCII characters",
+        "category": "artistic",
+        "parameters": [
+          {
+            "name": "charset",
+            "type": "enum",
+            "default": "standard",
+            "values": ["minimal", "standard", "extended", "blocks"]
+          },
+          {
+            "name": "invert",
+            "type": "bool",
+            "default": false
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Le frontend construit **dynamiquement** son interface à partir de cette réponse.
+
+---
+
+## 📊 Comparaison des Modes d'Utilisation
+
+| Cas d'Usage | Source | Filtres Act
