@@ -87,6 +87,33 @@ The frontend is a client, not a dependency of the backend.
 
 ---
 
+## Depedencies
+
+- gtkglext 
+- hdf5 
+- vtk 
+- opencv 
+- opencv-samples
+
+### Arch linux 
+
+```bash 
+sudo pacman -Syy hdf5 vtk base-devel pkg-config opencv opencv-samples
+```
+
+Add theses for arch : 
+```bash 
+yay -Syy base-devel pkg-config
+```
+```
+```
+
+
+```
+```
+
+--- 
+
 ## Roadmap
 
 * Binary WebSocket streaming (remove Base64)
