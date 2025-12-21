@@ -17,6 +17,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
@@ -28,8 +29,20 @@ option(VISIONCORE_BUILD_TESTS "Build VisionCore tests" ON)
 # Depedencies 
 # =================
 
-find_package(OpenCV 4 REQUIRED)
+
+find_package(OpenCV 4 REQUIRED COMPONENTS
+    core
+    imgproc
+    imgcodecs
+    videoio
+    highgui
+)
 find_package(Threads REQUIRED)
+
+
+# QT6 here until network stream and display are moved to seperate modules
+# TODO : remove QT6 dependency when those modules are created
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 
 
@@ -40,6 +53,11 @@ find_package(Threads REQUIRED)
 file(GLOB_RECURSE VISIONCORE_SOURCES
     CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
+)
+
+# Explicitly remove main.cpp from files 
+list(REMOVE_ITEM VISIONCORE_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
 )
 
 # ====================
@@ -55,7 +73,11 @@ target_include_directories(visioncore
 
 target_link_libraries(visioncore
     PUBLIC
-        ${OpenCV_LIBS}
+        opencv_core
+        opencv_imgproc
+        opencv_imgcodecs
+        opencv_videoio
+        opencv_highgui
         Threads::Threads
 )
 
@@ -79,6 +101,9 @@ add_executable(visioncore_app
 target_link_libraries(visioncore_app
     PRIVATE
         visioncore
+        # QT6 here until network stream and display are moved to seperate modules
+        # TODO : remove QT6 dependency when those modules are created
+        Qt6::Widgets
 )
 
 target_compile_features(visioncore_app PRIVATE cxx_std_20)
