@@ -3,6 +3,7 @@
 #include "core/WebcamSource.hpp"
 #include "filters/GrayscaleFilter.hpp"
 #include "filters/IFilter.hpp"
+#include "filters/ResizeFilter.hpp"
 #include "utils/Logger.hpp"
 #include <QApplication>
 #include <chrono>
@@ -29,6 +30,8 @@ void printUsage(const std::string &program_name) {
 
 int main(int argc, char *argv[]) {
 
+  utils::Logger::instance().setLogLevel(utils::LogLevel::DEBUG);
+
   QApplication app(argc, argv); // OBLIGATOIRE avec HighGUI+Qt
 
   if (argc < 3) {
@@ -50,12 +53,22 @@ int main(int argc, char *argv[]) {
   try {
     // Create the appropriate source using polymorphism
     std::unique_ptr<core::VideoSource> source;
-    // Create a filter
-
-    std::unique_ptr<filters::IFilter> filter;
-    filter = std::make_unique<filters::GrayscaleFilter>();
-    LOG_INFO("Filter : " + filter->getName() +
-             ", set to : " + (filter->isEnabled() ? "enabled" : "disabled"));
+    
+    // Create filters
+    std::unique_ptr<filters::IFilter> resize_filter = 
+        std::make_unique<filters::ResizeFilter>(640, 480);
+    std::unique_ptr<filters::IFilter> grayscale_filter = 
+        std::make_unique<filters::GrayscaleFilter>();
+    
+    LOG_INFO("ResizeFilter: " + resize_filter->getName() + ", enabled: " + 
+             (resize_filter->isEnabled() ? "true" : "false"));
+    LOG_INFO("GrayscaleFilter: " + grayscale_filter->getName() + ", enabled: " + 
+             (grayscale_filter->isEnabled() ? "true" : "false"));
+    
+    // Test setParameter to see DEBUG logs
+    LOG_INFO("Testing ResizeFilter parameter changes...");
+    resize_filter->setParameter("width", 640);
+    resize_filter->setParameter("height", 480);
 
     if (source_type == "--image") {
       LOG_INFO("Creating ImageSource: " + source_param);
@@ -93,16 +106,15 @@ int main(int argc, char *argv[]) {
         LOG_WARNING("Failed to read frame");
         break;
       }
-      filter->apply(frame, processed);
+      
+      // Apply filter pipeline: resize -> grayscale
+      cv::Mat resized;
+      resize_filter->apply(frame, resized);
+      grayscale_filter->apply(resized, processed);
 
-      // Resize for display (optional)
-      cv::Mat display_frame, display_processed;
-      double scale = 1.0;
-      if (dynamic_cast<core::ImageSource *>(source.get())) {
-        scale = 0.25;
-      }
-      cv::resize(frame, display_frame, cv::Size(), scale, scale);
-      cv::resize(processed, display_processed, cv::Size(), scale, scale);
+      // Use resized as the base for display (both have same dimensions now)
+      cv::Mat display_frame = resized;        // Already resized by filter
+      cv::Mat display_processed = processed;  // Same size as resized
 
       if (show_gui) {
         // Convert grayscale to BGR for concatenation (if needed)
