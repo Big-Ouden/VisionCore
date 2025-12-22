@@ -1,0 +1,140 @@
+name: backend-ci
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+  pull_request:
+    paths:
+      - 'backend/**'
+
+jobs:
+  cppcheck:
+    name: Run cppcheck on backend
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libopencv-dev \
+          qtbase5-dev \
+          libgtest-dev \
+          nlohmann-json3-dev
+
+    - name: Configure CMake
+      run: |
+        cd backend
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: |
+        cd backend/build
+        make -j$(nproc)
+
+    - name: Run tests
+      run: |
+        cd backend/build
+        ctest --output-on-failure --verbose
+
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-logs
+        path: backend/build/Testing/Temporary/
+
+  code-coverage:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libopencv-dev \
+          qtbase5-dev \
+          libgtest-dev \
+          nlohmann-json3-dev \
+          lcov
+
+    - name: Configure CMake with coverage
+      run: |
+        cd backend
+        mkdir -p build
+        cd build
+        cmake .. \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_FLAGS="--coverage" \
+          -DCMAKE_C_FLAGS="--coverage"
+
+    - name: Build
+      run: |
+        cd backend/build
+        make -j$(nproc)
+
+    - name: Run tests
+      run: |
+        cd backend/build
+        ctest --output-on-failure
+
+    - name: Generate coverage
+      run: |
+        cd backend/build
+        lcov --capture \
+          --directory . \
+          --output-file coverage.info \
+          --rc geninfo_unexecuted_blocks=1 \
+          --ignore-errors inconsistent,mismatch,negative
+        lcov --remove coverage.info '/usr/*' '*/tests/*' '*/build/_deps/*' \
+          --output-file coverage.info \
+          --ignore-errors inconsistent
+        lcov --list coverage.info
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: backend/build/coverage.info
+        flags: backend
+        name: backend-coverage
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+
+    - name: Run cppcheck
+      run: |
+        cppcheck \
+          --enable=warning,style,performance,portability \
+          --suppress=missingIncludeSystem \
+          --suppress=unusedFunction \
+          --inline-suppr \
+          -I backend/src \
+          -I /usr/include/opencv4 \
+          -I /usr/include/x86_64-linux-gnu/qt5 \
+          backend/src/
+
+    - name: Check results
+      if: failure()
+      run: echo "Static analysis found issues"
