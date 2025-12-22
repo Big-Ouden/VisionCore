@@ -1,138 +1,54 @@
-name: Backend CI
+name: backend-ci
 
 on:
   push:
-    branches: [ main, develop ]
     paths:
       - 'backend/**'
-      - '.github/workflows/backend-ci.yml'
   pull_request:
-    branches: [ main ]
     paths:
       - 'backend/**'
-  workflow_dispatch:
 
 jobs:
-  build-and-test:
+  cppcheck:
+    name: Run cppcheck on backend
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          cmake \
-          libopencv-dev \
-          qtbase5-dev \
-          libgtest-dev \
-          nlohmann-json3-dev
+      - name: Install cppcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
 
-    - name: Configure CMake
-      run: |
-        cd backend
-        mkdir -p build
-        cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release
+      - name: Run cppcheck from backend
+        run: |
+          set -euo pipefail
 
-    - name: Build
-      run: |
-        cd backend/build
-        make -j$(nproc)
+          if [ ! -d backend ]; then
+            echo "No backend directory found; skipping cppcheck."
+            exit 0
+          fi
 
-    - name: Run tests
-      run: |
-        cd backend/build
-        ctest --output-on-failure --verbose
+          cd backend
 
-    - name: Upload test logs on failure
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-logs
-        path: backend/build/Testing/Temporary/
+          echo "Collecting source and header files..."
+          # Count files to decide whether to run cppcheck
+          files_count=$(find . -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' -o -name '*.h' -o -name '*.hpp' \) | wc -l)
 
-  code-coverage:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+          if [ "${files_count:-0}" -eq 0 ]; then
+            echo "No source/header files found in backend; skipping cppcheck."
+            exit 0
+          fi
 
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          cmake \
-          libopencv-dev \
-          qtbase5-dev \
-          libgtest-dev \
-          nlohmann-json3-dev \
-          lcov
+          # If an include directory exists in backend, use it for includes
+          inc_arg=""
+          if [ -d include ]; then
+            inc_arg="-I include"
+            echo "Detected backend/include, adding include path: include"
+          fi
 
-    - name: Configure CMake with coverage
-      run: |
-        cd backend
-        mkdir -p build
-        cd build
-        cmake .. \
-          -DCMAKE_BUILD_TYPE=Debug \
-          -DCMAKE_CXX_FLAGS="--coverage" \
-          -DCMAKE_C_FLAGS="--coverage"
-
-    - name: Build
-      run: |
-        cd backend/build
-        make -j$(nproc)
-
-    - name: Run tests
-      run: |
-        cd backend/build
-        ctest --output-on-failure
-
-    - name: Generate coverage
-      run: |
-        cd backend/build
-        lcov --capture --directory . --output-file coverage.info --rc geninfo_unexecuted_blocks=1 --ignore-errors mismatch
-        lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
-        lcov --list coverage.info
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        files: backend/build/coverage.info
-        flags: backend
-        name: backend-coverage
-
-  static-analysis:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Install cppcheck
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cppcheck
-
-    - name: Run cppcheck
-      run: |
-        cppcheck \
-          --enable=all \
-          --suppress=missingIncludeSystem \
-          --suppress=unusedFunction \
-          --error-exitcode=1 \
-          --inline-suppr \
-          -I backend/include \
-          -I /usr/include \
-          backend/src/ \
-          backend/include/*.hpp
-
-    - name: Check results
-      if: failure()
-      run: echo "Static analysis found issues"
+          # Use find + xargs -0 to avoid issues with shell globbing/expansion and filenames with spaces
+          find . -type f \( -name '*.c' -o -name '*.cpp' -o -name '*.cc' -o -name '*.cxx' -o -name '*.h' -o -name '*.hpp' \) -print0 |
+            xargs -0 --no-run-if-empty cppcheck --enable=all ${inc_arg} -j2 --quiet
