@@ -53,18 +53,18 @@ int main(int argc, char *argv[]) {
   try {
     // Create the appropriate source using polymorphism
     std::unique_ptr<core::VideoSource> source;
-    
+
     // Create filters
-    std::unique_ptr<filters::IFilter> resize_filter = 
+    std::unique_ptr<filters::IFilter> resize_filter =
         std::make_unique<filters::ResizeFilter>(640, 480);
-    std::unique_ptr<filters::IFilter> grayscale_filter = 
+    std::unique_ptr<filters::IFilter> grayscale_filter =
         std::make_unique<filters::GrayscaleFilter>();
-    
-    LOG_INFO("ResizeFilter: " + resize_filter->getName() + ", enabled: " + 
-             (resize_filter->isEnabled() ? "true" : "false"));
-    LOG_INFO("GrayscaleFilter: " + grayscale_filter->getName() + ", enabled: " + 
+
+    LOG_INFO("ResizeFilter: " + resize_filter->getName() +
+             ", enabled: " + (resize_filter->isEnabled() ? "true" : "false"));
+    LOG_INFO("GrayscaleFilter: " + grayscale_filter->getName() + ", enabled: " +
              (grayscale_filter->isEnabled() ? "true" : "false"));
-    
+
     // Test setParameter to see DEBUG logs
     LOG_INFO("Testing ResizeFilter parameter changes...");
     resize_filter->setParameter("width", 640);
@@ -98,23 +98,24 @@ int main(int argc, char *argv[]) {
 
     // Main display loop
     cv::Mat frame, processed;
-    char display_mode = 'h'; // 'h' = horizontal (side-by-side), 'o' = original, 'f' = filtered
+    char display_mode =
+        'h'; // 'h' = horizontal (side-by-side), 'o' = original, 'f' = filtered
     bool running = true;
-    
+
     while (running) {
       if (!source->readFrame(frame)) {
         LOG_WARNING("Failed to read frame");
         break;
       }
-      
+
       // Apply filter pipeline: resize -> grayscale
       cv::Mat resized;
       resize_filter->apply(frame, resized);
       grayscale_filter->apply(resized, processed);
 
       // Use resized as the base for display (both have same dimensions now)
-      cv::Mat display_frame = resized;        // Already resized by filter
-      cv::Mat display_processed = processed;  // Same size as resized
+      cv::Mat display_frame = resized;       // Already resized by filter
+      cv::Mat display_processed = processed; // Same size as resized
 
       if (show_gui) {
         // Convert grayscale to BGR for concatenation (if needed)
@@ -142,8 +143,8 @@ int main(int argc, char *argv[]) {
           break;
         }
 
-        cv::flip(display,display, 1);
-        cv::imshow(source->getName(),display );
+        cv::flip(display, display, 1);
+        cv::imshow(source->getName(), display);
 
         // Wait for key press (1ms for webcam, 30ms for image)
         int wait_time = (source->getFPS() > 0) ? 30 : 1;
