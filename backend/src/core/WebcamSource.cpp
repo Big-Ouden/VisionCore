@@ -22,7 +22,7 @@ bool WebcamSource::open() {
     return false;
   }
 
-  // get properties
+  // Query actual device capabilities (may differ from requested values)
   configured_width_ = static_cast<int>(capture_.get(cv::CAP_PROP_FRAME_WIDTH));
   configured_height_ =
       static_cast<int>(capture_.get(cv::CAP_PROP_FRAME_HEIGHT));
