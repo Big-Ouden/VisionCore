@@ -111,31 +111,9 @@ jobs:
           --quiet
         lcov --remove coverage.info '/usr/*' '*/tests/*' '*/build/_deps/*' \
           --output-file coverage.info \
-          --ignore-errors inconsistent \
+          --ignore-errors inconsistent,unused \
           --quiet
         lcov --list coverage.info
-        genhtml coverage.info --output-directory coverage_html
-
-    - name: Extract coverage summary
-      working-directory: backend/build
-      run: |
-        echo "# Code Coverage Report" > coverage_summary.md
-        echo "" >> coverage_summary.md
-        echo "Generated on: $(date)" >> coverage_summary.md
-        echo "" >> coverage_summary.md
-        echo "\`\`\`" >> coverage_summary.md
-        lcov --list coverage.info >> coverage_summary.md
-        echo "\`\`\`" >> coverage_summary.md
-        
-    - name: Upload coverage artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-report
-        path: |
-          backend/build/coverage.info
-          backend/build/coverage_html/
-          backend/build/coverage_summary.md
-        retention-days: 30
 
   static-analysis:
     runs-on: ubuntu-latest
