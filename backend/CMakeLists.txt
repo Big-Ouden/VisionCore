@@ -39,7 +39,7 @@ find_package(OpenCV 4 REQUIRED COMPONENTS
 )
 find_package(Threads REQUIRED)
 
-find_package(nlohmann_json 3.12.0 REQUIRED)
+find_package(nlohmann_json 3.10 REQUIRED)
 
 # QT6 here until network stream and display are moved to seperate modules
 # TODO : remove QT6 dependency when those modules are created
