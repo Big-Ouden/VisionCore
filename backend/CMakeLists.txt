@@ -118,3 +118,92 @@ if(VISIONCORE_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+
+# ========================
+# Code Coverage Target
+# ========================
+find_program(LCOV_PATH lcov)
+find_program(GENHTML_PATH genhtml)
+
+if(LCOV_PATH AND GENHTML_PATH)
+    message(STATUS "lcov found: ${LCOV_PATH}")
+    message(STATUS "genhtml found: ${GENHTML_PATH}")
+    
+    add_custom_target(coverage
+        COMMENT "Generating code coverage report"
+        
+        # Clean previous coverage data
+        COMMAND ${LCOV_PATH} --zerocounters --directory .
+        
+        # Run tests
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+        
+        # Capture coverage data
+        COMMAND ${LCOV_PATH} 
+            --capture 
+            --directory . 
+            --output-file coverage.info
+            --rc geninfo_unexecuted_blocks=1
+            --ignore-errors inconsistent,mismatch,negative
+        
+        # Remove unwanted files from coverage
+        COMMAND ${LCOV_PATH}
+            --remove coverage.info 
+            '/usr/*' 
+            '*/tests/*' 
+            '*/build/_deps/*'
+            --output-file coverage.info
+            --ignore-errors inconsistent
+        
+        # Generate HTML report
+        COMMAND ${GENHTML_PATH}
+            coverage.info
+            --output-directory coverage_html
+            --ignore-errors inconsistent
+        
+        COMMAND ${CMAKE_COMMAND} -E echo "Coverage report generated in: ${CMAKE_BINARY_DIR}/coverage_html/index.html"
+        
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    )
+    
+    # Add dependency on tests
+    if(VISIONCORE_BUILD_TESTS)
+        add_dependencies(coverage test_filters test_sources test_pipeline)
+    endif()
+else()
+    message(STATUS "lcov or genhtml not found - coverage target will not be available")
+endif()
+
+
+# ========================
+# Static Analysis Target
+# ========================
+find_program(CPPCHECK_PATH cppcheck)
+
+if(CPPCHECK_PATH)
+    message(STATUS "cppcheck found: ${CPPCHECK_PATH}")
+    
+    # Collect all source files (excluding tests)
+    file(GLOB_RECURSE PROJECT_SOURCES 
+        ${CMAKE_SOURCE_DIR}/src/*.cpp
+        ${CMAKE_SOURCE_DIR}/src/*.hpp
+    )
+    
+    add_custom_target(cppcheck
+        COMMENT "Running static analysis with cppcheck on project files only"
+        COMMAND ${CPPCHECK_PATH}
+            --enable=warning,style,performance,portability
+            --suppress=missingIncludeSystem
+            --suppress=missingInclude
+            --suppress=unusedFunction
+            --inline-suppr
+            --quiet
+            -I ${CMAKE_SOURCE_DIR}/src
+            ${PROJECT_SOURCES}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+else()
+    message(STATUS "cppcheck not found - cppcheck target will not be available")
+endif()
+
