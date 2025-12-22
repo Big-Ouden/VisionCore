@@ -24,8 +24,8 @@ void GrayscaleFilter::apply(const cv::Mat &input, cv::Mat &output) {
   }
 }
 
-void GrayscaleFilter::setParameter(const std::string &name,
-                                   const nlohmann::json &value) {
+void GrayscaleFilter::setParameter([[maybe_unused]] const std::string &name,
+                                   [[maybe_unused]] const nlohmann::json &value) {
   LOG_WARNING("Grayscale Filter has no parameters");
 }
 
