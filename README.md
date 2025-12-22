@@ -94,11 +94,12 @@ The frontend is a client, not a dependency of the backend.
 - vtk 
 - opencv 
 - opencv-samples
+- nlohmann-json
 
 ### Arch linux 
 
 ```bash 
-sudo pacman -Syy hdf5 vtk base-devel pkg-config opencv opencv-samples
+sudo pacman -Syy hdf5 vtk base-devel pkg-config opencv opencv-samples nlohmann-json
 ```
 
 Add theses for arch : 
