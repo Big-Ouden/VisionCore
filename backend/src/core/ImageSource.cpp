@@ -10,7 +10,7 @@
 namespace visioncore::core {
 
 ImageSource::ImageSource(const std::string &image_path)
-    : image_path_(image_path) {}
+    : image_path_(image_path), is_opened_(false) {}
 
 ImageSource::~ImageSource() = default;
 

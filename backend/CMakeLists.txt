@@ -41,9 +41,9 @@ find_package(Threads REQUIRED)
 
 find_package(nlohmann_json 3.10 REQUIRED)
 
-# QT6 here until network stream and display are moved to seperate modules
-# TODO : remove QT6 dependency when those modules are created
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+# Qt5 here until network stream and display are moved to separate modules
+# TODO : remove Qt dependency when those modules are created
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
 
 
@@ -103,9 +103,9 @@ add_executable(visioncore_app
 target_link_libraries(visioncore_app
     PRIVATE
         visioncore
-        # QT6 here until network stream and display are moved to seperate modules
-        # TODO : remove QT6 dependency when those modules are created
-        Qt6::Widgets
+        # Qt5 here until network stream and display are moved to separate modules
+        # TODO : remove Qt dependency when those modules are created
+        Qt5::Widgets
 )
 
 target_compile_features(visioncore_app PRIVATE cxx_std_20)

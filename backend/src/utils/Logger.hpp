@@ -37,11 +37,11 @@ public:
               << "] [" << levelToString(level) << "]\t" << message << std::endl;
   }
 
-  void debug(const std::string msg) { log(LogLevel::DEBUG, msg); }
-  void info(const std::string msg) { log(LogLevel::INFO, msg); }
-  void warning(const std::string msg) { log(LogLevel::WARNING, msg); }
-  void error(const std::string msg) { log(LogLevel::ERROR, msg); }
-  void critical(const std::string msg) { log(LogLevel::CRITICAL, msg); }
+  void debug(const std::string &msg) { log(LogLevel::DEBUG, msg); }
+  void info(const std::string &msg) { log(LogLevel::INFO, msg); }
+  void warning(const std::string &msg) { log(LogLevel::WARNING, msg); }
+  void error(const std::string &msg) { log(LogLevel::ERROR, msg); }
+  void critical(const std::string &msg) { log(LogLevel::CRITICAL, msg); }
 
 private:
   Logger() : min_level_(LogLevel::DEBUG) {}
