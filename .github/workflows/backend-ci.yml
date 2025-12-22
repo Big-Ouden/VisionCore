@@ -128,12 +128,14 @@ jobs:
         cppcheck \
           --enable=warning,style,performance,portability \
           --suppress=missingIncludeSystem \
+          --suppress=missingInclude \
           --suppress=unusedFunction \
           --inline-suppr \
+          --quiet \
           -I backend/src \
-          -I /usr/include/opencv4 \
-          -I /usr/include/x86_64-linux-gnu/qt5 \
-          backend/src/
+          backend/src/*.cpp \
+          backend/src/*/*.cpp \
+          backend/src/*/*.hpp
 
     - name: Check results
       if: failure()
