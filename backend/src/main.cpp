@@ -1,10 +1,14 @@
 #include "core/ImageSource.hpp"
 #include "core/VideoSource.hpp"
 #include "core/WebcamSource.hpp"
+#include "filters/GrayscaleFilter.hpp"
+#include "filters/IFilter.hpp"
 #include "utils/Logger.hpp"
 #include <QApplication>
 #include <chrono>
 #include <memory>
+#include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <thread>
@@ -13,11 +17,13 @@ using namespace visioncore;
 
 void printUsage(const std::string &program_name) {
   std::cout << "Usage:" << std::endl;
-  std::cout << "\t" +  program_name + " --image <path> [--no-gui]" << std::endl;
-  std::cout << "\t" +  program_name + " --webcam <device_id> [--no-gui]" << std::endl;
+  std::cout << "\t" + program_name + " --image <path> [--no-gui]" << std::endl;
+  std::cout << "\t" + program_name + " --webcam <device_id> [--no-gui]"
+            << std::endl;
   std::cout << std::endl;
   std::cout << "Examples: " << std::endl;
-  std::cout << "\t" + program_name + " --image ../assets/image.jpg" << std::endl;
+  std::cout << "\t" + program_name + " --image ../assets/image.jpg"
+            << std::endl;
   std::cout << "\t" + program_name + " --webcam 0" << std::endl;
 }
 
@@ -44,6 +50,12 @@ int main(int argc, char *argv[]) {
   try {
     // Create the appropriate source using polymorphism
     std::unique_ptr<core::VideoSource> source;
+    // Create a filter
+
+    std::unique_ptr<filters::IFilter> filter;
+    filter = std::make_unique<filters::GrayscaleFilter>();
+    LOG_INFO("Filter : " + filter->getName() +
+             ", set to : " + (filter->isEnabled() ? "enabled" : "disabled"));
 
     if (source_type == "--image") {
       LOG_INFO("Creating ImageSource: " + source_param);
@@ -69,37 +81,91 @@ int main(int argc, char *argv[]) {
              std::to_string(source->getHeight()));
     LOG_INFO("FPS: " + std::to_string(source->getFPS()));
     LOG_INFO("Press 'q' or ESC to quit");
+    LOG_INFO("Press 'h' for side-by-side, 'o' for original, 'f' for filtered");
 
     // Main display loop
-    cv::Mat frame;
-    while (true) {
+    cv::Mat frame, processed;
+    char display_mode = 'h'; // 'h' = horizontal (side-by-side), 'o' = original, 'f' = filtered
+    bool running = true;
+    
+    while (running) {
       if (!source->readFrame(frame)) {
         LOG_WARNING("Failed to read frame");
         break;
       }
+      filter->apply(frame, processed);
 
       // Resize for display (optional)
-      cv::Mat display_frame;
+      cv::Mat display_frame, display_processed;
       double scale = 1.0;
-      if (dynamic_cast<core::ImageSource*>(source.get())){
-        scale = 0.5;
+      if (dynamic_cast<core::ImageSource *>(source.get())) {
+        scale = 0.25;
       }
       cv::resize(frame, display_frame, cv::Size(), scale, scale);
+      cv::resize(processed, display_processed, cv::Size(), scale, scale);
 
       if (show_gui) {
-        cv::imshow(source->getName(), display_frame);
+        // Convert grayscale to BGR for concatenation (if needed)
+        cv::Mat processed_bgr;
+        if (display_processed.channels() == 1) {
+          cv::cvtColor(display_processed, processed_bgr, cv::COLOR_GRAY2BGR);
+        } else {
+          processed_bgr = display_processed;
+        }
+
+        // Choose what to display based on mode
+        cv::Mat display;
+        switch (display_mode) {
+        case 'h': // Side-by-side (horizontal concat)
+          cv::hconcat(display_frame, processed_bgr, display);
+          break;
+        case 'o': // Original only
+          display = display_frame;
+          break;
+        case 'f': // Filtered only
+          display = processed_bgr;
+          break;
+        default:
+          cv::hconcat(display_frame, processed_bgr, display);
+          break;
+        }
+
+        cv::flip(display,display, 1);
+        cv::imshow(source->getName(),display );
 
         // Wait for key press (1ms for webcam, 30ms for image)
         int wait_time = (source->getFPS() > 0) ? 30 : 1;
         int key = cv::waitKey(wait_time);
 
-        if (key == 'q' || key == 'Q' || key == 27) { // 'q' or ESC
-          LOG_INFO("User requested quit");
-          break;
+        // Handle key presses
+        if (key != -1) { // -1 means no key pressed
+          switch (key) {
+          case 'h':
+          case 'H':
+            display_mode = 'h';
+            LOG_INFO("Display mode: Side-by-side");
+            break;
+          case 'o':
+          case 'O':
+            display_mode = 'o';
+            LOG_INFO("Display mode: Original only");
+            break;
+          case 'f':
+          case 'F':
+            display_mode = 'f';
+            LOG_INFO("Display mode: Filtered only");
+            break;
+          case 'q':
+          case 'Q':
+          case 27: // ESC
+            LOG_INFO("User requested quit");
+            running = false;
+            break;
+          }
         }
       } else {
         // If no GUI, just process one frame then exit
-        break;
+        running = false;
       }
     }
 
