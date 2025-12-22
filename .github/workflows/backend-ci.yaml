@@ -95,11 +95,11 @@ jobs:
         ctest --output-on-failure
 
     - name: Generate coverage
- 							run: |
-    cd backend/build
-    lcov --capture --directory . --output-file coverage.info --rc geninfo_unexecuted_blocks=1 --ignore-errors mismatch
-    lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
-    lcov --list coverage.info
+      run: |
+        cd backend/build
+        lcov --capture --directory . --output-file coverage.info --rc geninfo_unexecuted_blocks=1 --ignore-errors mismatch
+        lcov --remove coverage.info '/usr/*' '*/tests/*' --output-file coverage.info
+        lcov --list coverage.info
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
