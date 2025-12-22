@@ -1,12 +1,21 @@
-name: backend-ci
+name: Backend CI
 
 on:
   push:
+    branches: 
+      - main
+      - dev
     paths:
       - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
   pull_request:
+    branches: 
+      - main
+      - dev
     paths:
       - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  workflow_dispatch:
 
 jobs:
   cppcheck:
