@@ -23,11 +23,20 @@ public:
   virtual nlohmann::json getParameters() const = 0;
   virtual std::string getName() const = 0;
 
-  void setEnabled(bool enabled) { enabled_ = enabled; }
-  bool isEnabled() const { return enabled_; }
+  /**
+   * @brief Enable or disable the filter
+   * @param enabled True to enable, false to disable
+   */
+  virtual void setEnabled(bool enabled) { enabled_ = enabled; }
+  
+  /**
+   * @brief Check if the filter is enabled
+   * @return True if enabled, false otherwise
+   */
+  virtual bool isEnabled() const { return enabled_; }
 
 protected:
-  bool enabled_ = true;
+  bool enabled_ = true; ///< Filter enabled state
 };
 } // namespace visioncore::filters
 

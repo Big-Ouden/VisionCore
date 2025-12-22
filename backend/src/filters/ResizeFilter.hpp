@@ -27,9 +27,6 @@ public:
   nlohmann::json getParameters() const override;
   std::string getName() const override;
 
-protected:
-  bool enabled_ = true;
-
 private:
   int desired_width_;
   int desired_height_;

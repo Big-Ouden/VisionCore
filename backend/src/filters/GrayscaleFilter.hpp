@@ -30,9 +30,6 @@ public:
 
   nlohmann::json getParameters() const override;
   std::string getName() const override;
-
-protected:
-  bool enabled_ = true;
 };
 
 } // namespace visioncore::filters

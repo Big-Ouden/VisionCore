@@ -7,7 +7,7 @@
 
 namespace visioncore::filters {
 
-GrayscaleFilter::GrayscaleFilter() : enabled_(true) {}
+GrayscaleFilter::GrayscaleFilter() = default;
 
 GrayscaleFilter::~GrayscaleFilter() = default;
 
@@ -30,7 +30,9 @@ void GrayscaleFilter::setParameter(const std::string &name,
 }
 
 nlohmann::json GrayscaleFilter::getParameters() const {
-  return nlohmann::json::object();
+  nlohmann::json params;
+  params["enabled"] = enabled_;
+  return params;
 }
 
 std::string GrayscaleFilter::getName() const { return "grayscale"; }

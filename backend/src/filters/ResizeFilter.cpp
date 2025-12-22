@@ -10,7 +10,7 @@
 namespace visioncore::filters {
 
 ResizeFilter::ResizeFilter(const int width, const int height)
-    : enabled_(true), desired_width_(width), desired_height_(height) {}
+    : desired_width_(width), desired_height_(height) {}
 
 ResizeFilter::~ResizeFilter() = default;
 
