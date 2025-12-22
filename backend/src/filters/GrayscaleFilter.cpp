@@ -1,0 +1,38 @@
+/**
+ * @brief GrayscaleFilter implementation
+ */
+#include "GrayscaleFilter.hpp"
+#include "utils/Logger.hpp"
+#include <opencv2/opencv.hpp>
+
+namespace visioncore::filters {
+
+GrayscaleFilter::GrayscaleFilter() : enabled_(true) {}
+
+GrayscaleFilter::~GrayscaleFilter() = default;
+
+void GrayscaleFilter::apply(const cv::Mat &input, cv::Mat &output) {
+  if (!enabled_) {
+    output = input.clone();
+    return;
+  }
+
+  if (input.channels() == 1) {
+    output = input.clone();
+  } else {
+    cv::cvtColor(input, output, cv::COLOR_BGR2GRAY);
+  }
+}
+
+void GrayscaleFilter::setParameter(const std::string &name,
+                                   const nlohmann::json &value) {
+  LOG_WARNING("Grayscale Filter has no parameters");
+}
+
+nlohmann::json GrayscaleFilter::getParameters() const {
+  return nlohmann::json::object();
+}
+
+std::string GrayscaleFilter::getName() const { return "grayscale"; }
+
+} // namespace visioncore::filters
