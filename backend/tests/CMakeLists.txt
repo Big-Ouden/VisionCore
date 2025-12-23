@@ -4,6 +4,15 @@
 find_package(GTest REQUIRED)
 include(GoogleTest)
 
+# Test Logger
+add_executable(test_logger test_logger.cpp)
+target_link_libraries(test_logger PRIVATE 
+  visioncore 
+  GTest::GTest 
+  GTest::Main 
+)
+gtest_discover_tests(test_logger)
+
 # Test Filters
 add_executable(test_filters test_filters.cpp)
 target_link_libraries(test_filters PRIVATE 
