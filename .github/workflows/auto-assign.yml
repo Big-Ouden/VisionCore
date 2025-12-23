@@ -1,0 +1,40 @@
+name: Auto-assign and request review
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+jobs:
+  auto-assign:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Assign and request review from maintainer
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const prAuthor = context.payload.pull_request.user.login;
+            
+            // assign  PR to owner
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              assignees: [owner]
+            });
+            
+            console.log(`PR #${context.issue.number} assigned to @${owner}`);
+            
+            // if PR not created by owner ask for review
+            if (prAuthor !== owner) {
+              await github.rest.pulls.requestReviewers({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number,
+                reviewers: [owner]
+              });
+              
+              console.log(`Review asked to @${owner}`);
+            }
