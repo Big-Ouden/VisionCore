@@ -1,5 +1,3 @@
-# VisionCore
-
 <div align="center">
     <img src="assets/banner.webp"></img><br/>
     <img alt="GitHub License" src="https://img.shields.io/github/license/Big-Ouden/VisionCore?style=for-the-badge">
@@ -106,37 +104,124 @@ Add theses for arch :
 ```bash 
 yay -Syy base-devel pkg-config
 ```
-```
-```
 
 
-## Build 
 
-### Backend 
-Instruction to build the backend : 
-```bash 
+## Build, Test, Coverage & Static Analysis
+
+### Build Backend
+
+```bash
 cd backend/
 mkdir build
-cd build 
+cd build
 cmake ..
 make -j$(nproc)
 ```
 
+You will find the binary and library in `backend/build/` (`libvisioncore.a` & `visioncore_app`).
 
-Now you have the binary and library in `backend/build/` (`libvisioncore.a` & `visioncore_app`)
+### Run Unit Tests
 
-## Erreur clang 
+From the `backend/build` directory:
 
-In order to remove clangd erros in IDE (neovim in my case), you need to compile once the project (see "Build" ) and make : 
 ```bash
+ctest --output-on-failure
+```
+Or run a specific test binary:
+```bash
+./tests/test_logger
+```
 
+### Generate Code Coverage (HTML)
+
+Build with coverage flags (default is ON):
+
+```bash
+cd backend/
+rm -rf build
+mkdir build && cd build
+cmake -DCODE_COVERAGE=ON ..
+make
+ctest
+make coverage
+```
+
+The HTML report will be generated in `backend/build/coverage_html/index.html`.
+
+### Static Analysis (cppcheck)
+
+You can run static analysis on the backend sources:
+
+```bash
+cd backend
+cppcheck --enable=all --inconclusive --std=c++20 --force src/
+```
+
+Or use the integrated CMake target:
+
+```bash
+cd backend/build
+make cppcheck
+```
+
+### Clangd/IDE Integration
+
+To remove clangd errors in your IDE (e.g. neovim), after building once:
+
+```bash
 cd backend/
 ln -s build/compile_commands.json .
 ```
+Then restart your LSP (`:LspRestart` in neovim).
 
-After that your LSP (`:LspRestart` in neovim).
+---
 
---- 
+
+### Frontend-Backend Interaction (UI Control)
+
+> **Coming soon:**
+>
+> This section will detail how the web frontend (UI) interacts in real time with the backend engine:
+>
+> - Live filter and pipeline control from the browser
+> - Real-time parameter tuning and feedback
+> - WebSocket-based communication for low-latency updates
+> - Example UI workflows and API usage
+
+
+---
+
+
+## Backend CLI Mode
+
+The backend can be run as a standalone command-line application for direct processing and debugging, without the web frontend.
+
+### Usage
+
+From the `backend/build` directory:
+
+```bash
+./visioncore_app [options]
+```
+
+#### Example options (may vary depending on your implementation):
+
+- `--source <path>`: Specify an input video or image source
+- `--filter <name>`: Enable a specific filter
+- `--output <path>`: Save processed output to a file
+- `--help`: Show all available CLI options
+
+### Example
+
+```bash
+./visioncore_app --source assets/sample.mp4 --filter grayscale --output result.mp4
+```
+
+This mode is useful for testing, batch processing, or running the engine headless.
+
+---
+
 
 ## Roadmap
 
@@ -162,4 +247,6 @@ See the `LICENSE` file for details.
 **BigOuden**
 
 [https://belier.iiens.net](https://belier.iiens.net)
+
+
 
