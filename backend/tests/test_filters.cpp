@@ -83,6 +83,24 @@ TEST_F(GrayscaleFilterTest, GetParameters) {
   EXPECT_TRUE(params.is_object());
 }
 
+TEST_F(GrayscaleFilterTest, GetName) {
+  GrayscaleFilter filter;
+  EXPECT_EQ(filter.getName(), "grayscale");
+}
+
+TEST_F(GrayscaleFilterTest, ApplyToEmptyImage) {
+  cv::Mat empty_image;
+
+  GrayscaleFilter filter;
+  filter.setEnabled(true);
+  cv::Mat output;
+  filter.apply(empty_image, output);
+
+  // Both should be empty after applying filter to empty input
+  EXPECT_TRUE(empty_image.empty());
+  EXPECT_TRUE(output.empty());
+}
+
 // ==================== ResizeFilter Tests ====================
 
 class ResizeFilterTest : public ::testing::Test {
@@ -123,6 +141,17 @@ TEST_F(ResizeFilterTest, SetParameterWidth) {
   EXPECT_EQ(output.rows, 480);
 }
 
+TEST_F(ResizeFilterTest, SetParameterHeight) {
+  ResizeFilter filter(640, 480);
+  filter.setParameter("height", 800);
+
+  cv::Mat output;
+  filter.apply(test_image_, output);
+
+  EXPECT_EQ(output.cols, 640);
+  EXPECT_EQ(output.rows, 800);
+}
+
 TEST_F(ResizeFilterTest, GetParameters) {
   ResizeFilter filter(800, 600);
   auto params = filter.getParameters();
@@ -144,4 +173,55 @@ TEST_F(ResizeFilterTest, DisabledFilter) {
   // When disabled, should return clone of input
   EXPECT_EQ(output.rows, test_image_.rows);
   EXPECT_EQ(output.cols, test_image_.cols);
+  EXPECT_EQ(output.channels(), test_image_.channels());
+}
+
+TEST_F(ResizeFilterTest, SameSizeResize) {
+  ResizeFilter filter(640, 480);
+  filter.setEnabled(true);
+
+  cv::Mat output;
+  filter.apply(test_image_, output);
+  EXPECT_EQ(output.rows, test_image_.rows);
+  EXPECT_EQ(output.cols, test_image_.cols);
+  EXPECT_EQ(output.channels(), test_image_.channels());
+}
+
+TEST_F(ResizeFilterTest, InvalidWidthRejected) {
+  ResizeFilter filter(640, 480);
+
+  // Try to set invalid negative width
+  filter.setParameter("width", -100);
+  auto params = filter.getParameters();
+  EXPECT_EQ(params["width"], 640); // Should remain unchanged
+
+  // Try to set zero width
+  filter.setParameter("width", 0);
+  params = filter.getParameters();
+  EXPECT_EQ(params["width"], 640); // Should remain unchanged
+}
+
+TEST_F(ResizeFilterTest, InvalidHeightRejected) {
+  ResizeFilter filter(640, 480);
+
+  // Try to set invalid negative height
+  filter.setParameter("height", -50);
+  auto params = filter.getParameters();
+  EXPECT_EQ(params["height"], 480); // Should remain unchanged
+
+  // Try to set zero height
+  filter.setParameter("height", 0);
+  params = filter.getParameters();
+  EXPECT_EQ(params["height"], 480); // Should remain unchanged
+}
+
+TEST_F(ResizeFilterTest, UnknownParameterIgnored) {
+  ResizeFilter filter(640, 480);
+
+  // Try to set unknown parameter (should just log warning, not crash)
+  filter.setParameter("unknown_param", 42);
+
+  auto params = filter.getParameters();
+  EXPECT_EQ(params["width"], 640);
+  EXPECT_EQ(params["height"], 480);
 }

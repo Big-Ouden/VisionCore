@@ -134,6 +134,14 @@ TEST_F(WebcamSourceTest, OpenWebcam) {
   webcam.close();
 }
 
+TEST_F(WebcamSourceTest, NoWebcamAvailable) {
+  if (!isWebcamAvailable()) {
+    WebcamSource webcam(0);
+    EXPECT_FALSE(webcam.open());
+    EXPECT_FALSE(webcam.isOpened());
+  }
+}
+
 TEST_F(WebcamSourceTest, GetDimensions) {
   if (!isWebcamAvailable()) {
     GTEST_SKIP() << "No webcam available, skipping test";
@@ -171,6 +179,23 @@ TEST_F(WebcamSourceTest, ReadFrame) {
   EXPECT_FALSE(frame.empty());
   EXPECT_EQ(frame.rows, webcam.getHeight());
   EXPECT_EQ(frame.cols, webcam.getWidth());
+
+  webcam.close();
+}
+
+TEST_F(WebcamSourceTest, ReadFrameWebcamNotOpened) {
+  if (!isWebcamAvailable()) {
+    GTEST_SKIP() << "No webcam available, skipping test";
+  }
+
+  WebcamSource webcam(0);
+  // webcam.open();
+  cv::Mat frame;
+
+  EXPECT_FALSE(webcam.readFrame(frame));
+  EXPECT_TRUE(frame.empty());
+  EXPECT_EQ(frame.rows, 0);
+  EXPECT_EQ(frame.cols, 0);
 
   webcam.close();
 }
