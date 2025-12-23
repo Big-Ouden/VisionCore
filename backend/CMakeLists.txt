@@ -145,7 +145,8 @@ if(LCOV_PATH AND GENHTML_PATH)
             --directory . 
             --output-file coverage.info
             --rc geninfo_unexecuted_blocks=1
-            --ignore-errors inconsistent,mismatch,negative
+            --ignore-errors inconsistent,mismatch,negative,inconsistent
+            --quiet
         
         # Remove unwanted files from coverage
         COMMAND ${LCOV_PATH}
@@ -154,13 +155,15 @@ if(LCOV_PATH AND GENHTML_PATH)
             '*/tests/*' 
             '*/build/_deps/*'
             --output-file coverage.info
-            --ignore-errors inconsistent
+            --ignore-errors inconsistent,unused 
+            --quiet
         
         # Generate HTML report
         COMMAND ${GENHTML_PATH}
             coverage.info
             --output-directory coverage_html
             --ignore-errors inconsistent
+            --quiet
         
         COMMAND ${CMAKE_COMMAND} -E echo "Coverage report generated in: ${CMAKE_BINARY_DIR}/coverage_html/index.html"
         

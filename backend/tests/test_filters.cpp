@@ -2,6 +2,7 @@
 #include "../src/filters/ResizeFilter.hpp"
 #include <gtest/gtest.h>
 #include <opencv2/opencv.hpp>
+#include <string>
 
 using namespace visioncore::filters;
 
@@ -12,9 +13,11 @@ protected:
   void SetUp() override {
     // Create test image (blue 100x100)
     test_image_ = cv::Mat(100, 100, CV_8UC3, cv::Scalar(255, 0, 0));
+    test_image_gray_ = cv::Mat(100, 100, CV_8UC1);
   }
 
   cv::Mat test_image_;
+  cv::Mat test_image_gray_;
 };
 
 TEST_F(GrayscaleFilterTest, Constructor) {
@@ -44,6 +47,40 @@ TEST_F(GrayscaleFilterTest, DisabledFilter) {
 
   // When disabled, should return clone of input
   EXPECT_EQ(output.channels(), test_image_.channels());
+}
+
+TEST_F(GrayscaleFilterTest, ApplyToGrayImage) {
+  GrayscaleFilter filter;
+
+  cv::Mat output;
+  filter.apply(test_image_gray_, output);
+
+  EXPECT_EQ(output.channels(), test_image_gray_.channels());
+  EXPECT_EQ(output.rows, test_image_gray_.rows);
+  EXPECT_EQ(output.cols, test_image_gray_.cols);
+}
+
+TEST_F(GrayscaleFilterTest, SetParameter) {
+  GrayscaleFilter filter;
+
+  // GrayscaleFilter has no configurable parameters
+  // Test that setParameter doesn't crash
+  filter.setParameter("any_param", 42);
+  filter.setParameter("another", "value");
+
+  // Filter should still work normally
+  cv::Mat output;
+  filter.apply(test_image_, output);
+  EXPECT_FALSE(output.empty());
+  EXPECT_EQ(output.channels(), 1);
+}
+
+TEST_F(GrayscaleFilterTest, GetParameters) {
+  GrayscaleFilter filter;
+  auto params = filter.getParameters();
+
+  // GrayscaleFilter has no parameters, should return empty or minimal JSON
+  EXPECT_TRUE(params.is_object());
 }
 
 // ==================== ResizeFilter Tests ====================
@@ -92,14 +129,13 @@ TEST_F(ResizeFilterTest, GetParameters) {
 
   EXPECT_TRUE(params.contains("width"));
   EXPECT_TRUE(params.contains("height"));
-  
+
   EXPECT_EQ(params["width"], 800);
   EXPECT_EQ(params["height"], 600);
 }
 
-
 TEST_F(ResizeFilterTest, DisabledFilter) {
-  ResizeFilter filter(800,600);
+  ResizeFilter filter(800, 600);
   filter.setEnabled(false);
 
   cv::Mat output;
