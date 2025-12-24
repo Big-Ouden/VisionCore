@@ -62,43 +62,70 @@ PipelineResult<void> FramePipeline::clear() {
   return PipelineResult<void>::Ok();
 }
 
-void FramePipeline::process(const cv::Mat &input, cv::Mat &output) const {
+PipelineResult<void> FramePipeline::process(const cv::Mat &input,
+                                            cv::Mat &output) const {
+
+  if (filters_.empty())
+    return PipelineResult<void>::Err(PipelineError::EmptyPipeline);
+
+  if (input.empty()) {
+    output.release();
+    return PipelineResult<void>::Err(PipelineError::NullPointer,
+                                     "Input image is empty");
+  }
 
   std::vector<std::shared_ptr<filters::IFilter>> local_filters;
-
   {
     std::lock_guard<std::mutex> lock(filters_mutex_);
     local_filters = filters_;
   }
 
-  if (filters_.empty()) {
+  if (local_filters.empty()) {
+    // pipeline vide → renvoyer l'image inchangée
     output = input.clone();
-    return;
+    return PipelineResult<void>::Ok();
   }
 
   cv::Mat current = input.clone();
-  cv::Mat tmp;
 
   for (auto &f : local_filters) {
 
     if (!f->isEnabled()) {
-      LOG_DEBUG(f->getName() + "disabled");
+      LOG_DEBUG(f->getName() + " disabled");
       continue;
     }
 
+    cv::Mat tmp;
     auto start = std::chrono::steady_clock::now();
 
-    f->apply(current, tmp);
+    // f->apply modifie tmp en sortie
+    try {
+      f->apply(current, tmp);
+    } catch (const std::exception &e) {
+      return PipelineResult<void>::Err(PipelineError::InvalidFilter,
+                                       "Filter " + f->getName() +
+                                           " threw: " + e.what());
+    } catch (...) {
+      return PipelineResult<void>::Err(PipelineError::InvalidFilter,
+                                       "Filter " + f->getName() + " crashed");
+    }
+
+    if (tmp.empty()) {
+      return PipelineResult<void>::Err(PipelineError::InvalidFilter,
+                                       "Filter " + f->getName() +
+                                           " produced empty output");
+    }
 
     current = tmp;
 
     auto elapsed = std::chrono::steady_clock::now() - start;
     auto ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-    LOG_DEBUG(f->getName() + "took " + std::to_string(ms) + "ms");
+    LOG_DEBUG(f->getName() + " took " + std::to_string(ms) + "ms");
   }
 
   output = current;
+  return PipelineResult<void>::Ok();
 }
 
 PipelineResult<void> FramePipeline::moveFilter(size_t oldIndex,

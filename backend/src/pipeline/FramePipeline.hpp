@@ -49,7 +49,7 @@ public:
    * @param Input frame (cv::Mat)
    * @param Output frame (cv::Mat)
    */
-  void process(const cv::Mat &input, cv::Mat &output) const;
+  PipelineResult<void> process(const cv::Mat &input, cv::Mat &output) const;
 
   /**
    * @brief Move a filter from one position to another
