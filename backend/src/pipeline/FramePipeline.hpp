@@ -9,6 +9,7 @@
 #define FRAMEPIPELINE_HPP
 
 #include "../filters/IFilter.hpp"
+#include "PipelineError.hpp"
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
@@ -29,18 +30,19 @@ public:
    * @brief Add a filter to the pipeline
    * @param filter Shared pointer to a filter
    */
-  void addFilter(const std::shared_ptr<filters::IFilter> &filter);
+  PipelineResult<void>
+  addFilter(const std::shared_ptr<filters::IFilter> &filter);
 
   /**
    * @brief Remove a filter by index
    * @param index Index of the filter to remove
    */
-  void removeFilter(const size_t index);
+  PipelineResult<void> removeFilter(const size_t index);
 
   /**
    * @brief Remove all filters from the pipeline
    */
-  void clear();
+  PipelineResult<void> clear();
 
   /**
    * @brief Process an input frame through all active filters
@@ -54,26 +56,28 @@ public:
    * @param oldIndex Current index
    * @param newIndex Target index
    */
-  void moveFilter(size_t oldIndex, size_t newIndex);
+  PipelineResult<void> moveFilter(size_t oldIndex, size_t newIndex);
 
   /**
    * @brief Enable or disable a filter
    * @param index Index of the filter
    * @param active True to enable, false to disable
    */
-  void setFilterEnabled(size_t index, bool enabled);
+  PipelineResult<void> setFilterEnabled(size_t index, bool enabled);
 
   /**
    * @brief Get the list of filters (const ref)
    */
-  const std::vector<std::shared_ptr<filters::IFilter>> &getFilters() const;
+  PipelineResult<std::vector<std::shared_ptr<filters::IFilter>>>
+  getFilters() const;
 
   /**
    * @brief Get a filter by index (const ref)
    * @param index Index of the filter
    * @return Shared pointer to the filter
    */
-  std::shared_ptr<filters::IFilter> getFilterByIndex(size_t index) const;
+  PipelineResult<std::shared_ptr<filters::IFilter>>
+  getFilterByIndex(size_t index) const;
 
   /**
    * @brief Get the number of filters in the pipeline
