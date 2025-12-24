@@ -1,200 +1,235 @@
+/**
+ * @file main.cpp
+ * @brief Entry Point for VisionCore pipeline demo application
+ */
+
+#include <QApplication>
+
+#include <opencv2/core.hpp>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
+
+#include <cstdlib>
+#include <memory>
+#include <string>
+
+// Core
 #include "core/ImageSource.hpp"
 #include "core/VideoSource.hpp"
 #include "core/WebcamSource.hpp"
+
+// Filters
 #include "filters/GrayscaleFilter.hpp"
-#include "filters/IFilter.hpp"
 #include "filters/ResizeFilter.hpp"
+
+// Pipeline
+#include "pipeline/FramePipeline.hpp"
+#include "pipeline/PipelineError.hpp"
+
+// Utils
 #include "utils/Logger.hpp"
-#include <QApplication>
-#include <chrono>
-#include <memory>
-#include <opencv2/core.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/opencv.hpp>
-#include <string>
-#include <thread>
 
 using namespace visioncore;
 
-void printUsage(const std::string &program_name) {
-  std::cout << "Usage:" << std::endl;
-  std::cout << "\t" + program_name + " --image <path> [--no-gui]" << std::endl;
-  std::cout << "\t" + program_name + " --webcam <device_id> [--no-gui]"
-            << std::endl;
-  std::cout << std::endl;
-  std::cout << "Examples: " << std::endl;
-  std::cout << "\t" + program_name + " --image ../assets/image.jpg"
-            << std::endl;
-  std::cout << "\t" + program_name + " --webcam 0" << std::endl;
+/* ============================================================
+ * Error handling helpers
+ * ============================================================ */
+
+template <typename T>
+T unwrap_or_exit(pipeline::PipelineResult<T> &&res,
+                 const std::string &context) {
+  if (res.isErr()) {
+    LOG_CRITICAL(context + ": " + res.errorType() +
+                 (res.message.empty() ? "" : " — " + res.message));
+    std::exit(EXIT_FAILURE);
+  }
+  return std::move(res.value);
 }
+
+inline void unwrap_or_exit(pipeline::PipelineResult<void> &&res,
+                           const std::string &context) {
+  if (res.isErr()) {
+    LOG_CRITICAL(context + ": " + res.errorType() +
+                 (res.message.empty() ? "" : " — " + res.message));
+    std::exit(EXIT_FAILURE);
+  }
+}
+
+/* ============================================================
+ * Usage
+ * ============================================================ */
+
+void printUsage(const std::string &programName) {
+  std::cout << "Usage:\n"
+            << "  " << programName << " --image <path>\n"
+            << "  " << programName << " --webcam <device_id>\n";
+}
+
+/* ============================================================
+ * Main
+ * ============================================================ */
 
 int main(int argc, char *argv[]) {
 
-  utils::Logger::instance().setLogLevel(utils::LogLevel::DEBUG);
-
-  QApplication app(argc, argv); // OBLIGATOIRE avec HighGUI+Qt
+  utils::Logger::instance().setLogLevel(utils::LogLevel::INFO);
+  QApplication app(argc, argv);
 
   if (argc < 3) {
     printUsage(argv[0]);
-    return 1;
+    return EXIT_FAILURE;
   }
 
-  std::string source_type = argv[1];
-  std::string source_param = argv[2];
-  bool show_gui = true;
+  const std::string sourceType = argv[1];
+  const std::string sourceParam = argv[2];
 
-  if (argc > 3 && std::string(argv[3]) == "--no-gui") {
-    show_gui = false;
+  /* ------------------------------------------------------------
+   * Source creation
+   * ------------------------------------------------------------ */
+
+  std::unique_ptr<core::VideoSource> source;
+
+  if (sourceType == "--image") {
+    source = std::make_unique<core::ImageSource>(sourceParam);
+  } else if (sourceType == "--webcam") {
+    source = std::make_unique<core::WebcamSource>(std::stoi(sourceParam));
+  } else {
+    LOG_CRITICAL("Unknown source type");
+    printUsage(argv[0]);
+    return EXIT_FAILURE;
   }
 
-  LOG_INFO("=== VideoSource Test ===");
-  LOG_INFO("GUI mode: " + std::string(show_gui ? "enabled" : "disabled"));
+  if (!source->open()) {
+    LOG_CRITICAL("Failed to open source");
+    return EXIT_FAILURE;
+  }
 
-  try {
-    // Create the appropriate source using polymorphism
-    std::unique_ptr<core::VideoSource> source;
+  LOG_INFO("Source opened: " + source->getName());
+  LOG_INFO("Press 'h' (side-by-side), 'o' (original), 'f' (filtered)");
+  LOG_INFO("Press 'g' to toggle grayscale filter");
+  LOG_INFO("Press 'q' or ESC to quit");
 
-    // Create filters
-    std::unique_ptr<filters::IFilter> resize_filter =
-        std::make_unique<filters::ResizeFilter>(640, 480);
-    std::unique_ptr<filters::IFilter> grayscale_filter =
-        std::make_unique<filters::GrayscaleFilter>();
+  /* ------------------------------------------------------------
+   * Pipeline configuration
+   * ------------------------------------------------------------ */
 
-    LOG_INFO("ResizeFilter: " + resize_filter->getName() +
-             ", enabled: " + (resize_filter->isEnabled() ? "true" : "false"));
-    LOG_INFO("GrayscaleFilter: " + grayscale_filter->getName() + ", enabled: " +
-             (grayscale_filter->isEnabled() ? "true" : "false"));
+  pipeline::FramePipeline pipeline("main");
 
-    // Test setParameter to see DEBUG logs
-    LOG_INFO("Testing ResizeFilter parameter changes...");
-    resize_filter->setParameter("width", 640);
-    resize_filter->setParameter("height", 480);
+  unwrap_or_exit(
+      pipeline.addFilter(std::make_shared<filters::ResizeFilter>(640, 480)),
+      "Add ResizeFilter");
 
-    if (source_type == "--image") {
-      LOG_INFO("Creating ImageSource: " + source_param);
-      source = std::make_unique<core::ImageSource>(source_param);
-    } else if (source_type == "--webcam") {
-      int device_id = std::stoi(source_param);
-      LOG_INFO("Creating WebcamSource: device " + std::to_string(device_id));
-      source = std::make_unique<core::WebcamSource>(device_id);
+  auto grayscaleFilter = std::make_shared<filters::GrayscaleFilter>();
+
+  unwrap_or_exit(pipeline.addFilter(grayscaleFilter), "Add GrayscaleFilter");
+
+  /* ------------------------------------------------------------
+   * Main loop
+   * ------------------------------------------------------------ */
+
+  cv::Mat frame;
+  cv::Mat processed;
+
+  char displayMode = 'h'; // h = concat, o = original, f = filtered
+  bool running = true;
+
+  while (running) {
+
+    if (!source->readFrame(frame)) {
+      LOG_WARNING("Failed to read frame");
+      break;
+    }
+
+    pipeline.process(frame, processed);
+
+    /* ----------------------------------------------------------
+     * Safe color handling
+     * ---------------------------------------------------------- */
+
+    cv::Mat frameBgr;
+    if (frame.channels() == 1) {
+      cv::cvtColor(frame, frameBgr, cv::COLOR_GRAY2BGR);
     } else {
-      LOG_ERROR("Unknown source type: " + source_type);
-      printUsage(argv[0]);
-      return 1;
+      frameBgr = frame;
     }
 
-    // Open the source
-    if (!source->open()) {
-      LOG_ERROR("Failed to open source: " + source->getName());
-      return 1;
+    cv::Mat processedBgr;
+    if (processed.channels() == 1) {
+      cv::cvtColor(processed, processedBgr, cv::COLOR_GRAY2BGR);
+    } else {
+      processedBgr = processed;
     }
 
-    LOG_INFO("Source opened: " + source->getName());
-    LOG_INFO("Resolution: " + std::to_string(source->getWidth()) + "x" +
-             std::to_string(source->getHeight()));
-    LOG_INFO("FPS: " + std::to_string(source->getFPS()));
-    LOG_INFO("Press 'q' or ESC to quit");
-    LOG_INFO("Press 'h' for side-by-side, 'o' for original, 'f' for filtered");
+    /* ----------------------------------------------------------
+     * Display selection
+     * ---------------------------------------------------------- */
 
-    // Main display loop
-    cv::Mat frame, processed;
-    char display_mode =
-        'h'; // 'h' = horizontal (side-by-side), 'o' = original, 'f' = filtered
-    bool running = true;
+    cv::Mat display;
 
-    while (running) {
-      if (!source->readFrame(frame)) {
-        LOG_WARNING("Failed to read frame");
-        break;
-      }
-
-      // Apply filter pipeline: resize -> grayscale
-      cv::Mat resized;
-      resize_filter->apply(frame, resized);
-      grayscale_filter->apply(resized, processed);
-
-      // Use resized as the base for display (both have same dimensions now)
-      cv::Mat display_frame = resized;       // Already resized by filter
-      cv::Mat display_processed = processed; // Same size as resized
-
-      if (show_gui) {
-        // Convert grayscale to BGR for concatenation (if needed)
-        cv::Mat processed_bgr;
-        if (display_processed.channels() == 1) {
-          cv::cvtColor(display_processed, processed_bgr, cv::COLOR_GRAY2BGR);
-        } else {
-          processed_bgr = display_processed;
-        }
-
-        // Choose what to display based on mode
-        cv::Mat display;
-        switch (display_mode) {
-        case 'h': // Side-by-side (horizontal concat)
-          cv::hconcat(display_frame, processed_bgr, display);
-          break;
-        case 'o': // Original only
-          display = display_frame;
-          break;
-        case 'f': // Filtered only
-          display = processed_bgr;
-          break;
-        default:
-          cv::hconcat(display_frame, processed_bgr, display);
-          break;
-        }
-
-        cv::flip(display, display, 1);
-        cv::imshow(source->getName(), display);
-
-        // Wait for key press (1ms for webcam, 30ms for image)
-        int wait_time = (source->getFPS() > 0) ? 30 : 1;
-        int key = cv::waitKey(wait_time);
-
-        // Handle key presses
-        if (key != -1) { // -1 means no key pressed
-          switch (key) {
-          case 'h':
-          case 'H':
-            display_mode = 'h';
-            LOG_INFO("Display mode: Side-by-side");
-            break;
-          case 'o':
-          case 'O':
-            display_mode = 'o';
-            LOG_INFO("Display mode: Original only");
-            break;
-          case 'f':
-          case 'F':
-            display_mode = 'f';
-            LOG_INFO("Display mode: Filtered only");
-            break;
-          case 'q':
-          case 'Q':
-          case 27: // ESC
-            LOG_INFO("User requested quit");
-            running = false;
-            break;
-          }
-        }
-      } else {
-        // If no GUI, just process one frame then exit
-        running = false;
-      }
+    switch (displayMode) {
+    case 'h':
+      cv::hconcat(frameBgr, processedBgr, display);
+      break;
+    case 'o':
+      display = frameBgr;
+      break;
+    case 'f':
+      display = processedBgr;
+      break;
+    default:
+      display = frameBgr;
+      break;
     }
 
-    source->close();
-    LOG_INFO("Source closed");
+    cv::imshow(source->getName(), display);
 
-    if (show_gui) {
-      cv::destroyAllWindows();
-      cv::waitKey(50);
+    int key = cv::waitKey(1);
+    if (key == -1)
+      continue;
+
+    switch (key) {
+    case 'h':
+    case 'H':
+      displayMode = 'h';
+      LOG_INFO("Display mode: side-by-side");
+      break;
+
+    case 'o':
+    case 'O':
+      displayMode = 'o';
+      LOG_INFO("Display mode: original");
+      break;
+
+    case 'f':
+    case 'F':
+      displayMode = 'f';
+      LOG_INFO("Display mode: filtered");
+      break;
+
+    case 'g':
+    case 'G':
+      grayscaleFilter->setEnabled(!grayscaleFilter->isEnabled());
+      LOG_INFO(std::string("Grayscale filter: ") +
+               (grayscaleFilter->isEnabled() ? "enabled" : "disabled"));
+      break;
+
+    case 'q':
+    case 'Q':
+    case 27:
+      running = false;
+      break;
     }
-
-    LOG_INFO("Test completed successfully");
-    return 0;
-
-  } catch (const std::exception &e) {
-    LOG_CRITICAL("Exception: " + std::string(e.what()));
-    return 1;
   }
+
+  /* ------------------------------------------------------------
+   * Cleanup
+   * ------------------------------------------------------------ */
+
+  source->close();
+  cv::destroyAllWindows();
+  cv::waitKey(100);
+
+  source.reset();
+
+  LOG_INFO("Application terminated cleanly");
+  std::_Exit(EXIT_SUCCESS);
 }
