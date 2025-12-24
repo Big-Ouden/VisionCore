@@ -1,4 +1,3 @@
-
 /**
  * @file main.cpp
  * @brief Entry Point for VisionCore pipeline demo application
@@ -227,7 +226,10 @@ int main(int argc, char *argv[]) {
 
   source->close();
   cv::destroyAllWindows();
+  cv::waitKey(100);
+
+  source.reset();
 
   LOG_INFO("Application terminated cleanly");
-  return EXIT_SUCCESS;
+  std::_Exit(EXIT_SUCCESS);
 }
