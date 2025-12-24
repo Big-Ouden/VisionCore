@@ -72,7 +72,7 @@ void printUsage(const std::string &programName) {
 
 int main(int argc, char *argv[]) {
 
-  utils::Logger::instance().setLogLevel(utils::LogLevel::DEBUG);
+  utils::Logger::instance().setLogLevel(utils::LogLevel::INFO);
   QApplication app(argc, argv);
 
   if (argc < 3) {
