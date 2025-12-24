@@ -23,20 +23,19 @@ public:
    * @brief Construct a new FramePipeline
    * @param name Optional pipeline name
    */
-  explicit FramePipeline(const std::string& name = "");
+  explicit FramePipeline(const std::string &name = "");
 
   /**
    * @brief Add a filter to the pipeline
    * @param filter Shared pointer to a filter
-   * @return true if added, false if already present
    */
-  bool addFilter(const std::shared_ptr<filters::IFilter>& filter);
+  void addFilter(const std::shared_ptr<filters::IFilter> &filter);
 
   /**
    * @brief Remove a filter by index
    * @param index Index of the filter to remove
    */
-  void removeFilter(size_t index);
+  void removeFilter(const size_t index);
 
   /**
    * @brief Remove all filters from the pipeline
@@ -45,10 +44,10 @@ public:
 
   /**
    * @brief Process an input frame through all active filters
-   * @param input Input frame (cv::Mat)
-   * @return Processed frame (cv::Mat)
+   * @param Input frame (cv::Mat)
+   * @param Output frame (cv::Mat)
    */
-  cv::Mat process(const cv::Mat& input) const;
+  void process(const cv::Mat &input, cv::Mat &output) const;
 
   /**
    * @brief Move a filter from one position to another
@@ -62,12 +61,12 @@ public:
    * @param index Index of the filter
    * @param active True to enable, false to disable
    */
-  void setFilterActive(size_t index, bool active);
+  void setFilterEnabled(size_t index, bool enabled);
 
   /**
    * @brief Get the list of filters (const ref)
    */
-  const std::vector<std::shared_ptr<filters::IFilter>>& getFilters() const;
+  const std::vector<std::shared_ptr<filters::IFilter>> &getFilters() const;
 
   /**
    * @brief Get a filter by index (const ref)
@@ -84,11 +83,17 @@ public:
   /**
    * @brief Get the pipeline name
    */
-  const std::string& getName() const;
+  const std::string &getName() const;
+
+  /**
+   * @brief Return true if pipeline is active, false else
+   */
+  bool isActive() const;
 
 private:
+  mutable std::mutex filters_mutex_; ///< Mutex for thread safety
   std::vector<std::shared_ptr<filters::IFilter>> filters_; ///< List of filters
-  bool active_; ///< Activation state of the pipeline
+  bool active_;      ///< Activation state of the pipeline
   std::string name_; ///< Pipeline name
 };
 
