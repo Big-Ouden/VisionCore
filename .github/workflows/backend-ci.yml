@@ -18,8 +18,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  cppcheck:
-    name: Run cppcheck on backend
+  build-and-tests:
+    name: Run build and tests
     runs-on: ubuntu-latest
 
     steps:
