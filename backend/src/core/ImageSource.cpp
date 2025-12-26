@@ -1,4 +1,5 @@
 /**
+ * @file ImageSource.cpp
  * @brief ImageSource implementation
  */
 #include "ImageSource.hpp"

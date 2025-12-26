@@ -1,6 +1,7 @@
 /**
+ * @file VideoSource.hpp
  * @brief Abstract interface for video frame sources
- * 
+ *
  * Provides a unified interface for different types of video sources
  * (webcams, image files, video files, network streams, etc.).
  * All sources share the same lifecycle: open -> readFrame (loop) -> close.
@@ -28,7 +29,8 @@ public:
   /**
    * @brief Reads the next frame from the source
    * @param frame Output parameter where the frame will be stored
-   * @return true if frame was successfully read, false on error or end of stream
+   * @return true if frame was successfully read, false on error or end of
+   * stream
    */
   virtual bool readFrame(cv::Mat &frame) = 0;
 

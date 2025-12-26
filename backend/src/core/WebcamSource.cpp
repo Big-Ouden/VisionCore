@@ -1,4 +1,5 @@
 /**
+ * @file WebcamSource.cpp
  * @brief WebcamSource implementation
  */
 
