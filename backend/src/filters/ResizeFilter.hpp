@@ -16,6 +16,11 @@ public:
   explicit ResizeFilter(const int width, const int height);
 
   /**
+   * @brief Construct the filter with scale parameters
+   */
+  explicit ResizeFilter(const double scale);
+
+  /**
    * @Brief Destructor
    */
   ~ResizeFilter() override;
@@ -28,8 +33,9 @@ public:
   std::string getName() const override;
 
 private:
-  int desired_width_;
-  int desired_height_;
+  int desired_width_ = 0;
+  int desired_height_ = 0;
+  double scale_ = 0.0;
 };
 
 } // namespace visioncore::filters
