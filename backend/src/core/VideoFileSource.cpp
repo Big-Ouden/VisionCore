@@ -71,5 +71,6 @@ int VideoFileSource::getHeight() const { return configured_height_; }
 double VideoFileSource::getFPS() const { return configured_fps_; }
 bool VideoFileSource::isOpened() const { return capture_.isOpened(); }
 std::string VideoFileSource::getName() const { return video_path_; }
+bool VideoFileSource::isLoopEnabled() const { return loop_; }
 
 } // namespace visioncore::core

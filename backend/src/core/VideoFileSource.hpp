@@ -33,6 +33,7 @@ public:
   double getFPS() const override;
   bool isOpened() const override;
   std::string getName() const override;
+  bool isLoopEnabled() const;
 
 private:
   cv::VideoCapture capture_; ///< OpenCV video capture handle for file I/O
