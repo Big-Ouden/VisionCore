@@ -45,7 +45,7 @@ bool WebcamSource::readFrame(cv::Mat &frame) {
 void WebcamSource::close() {
   if (capture_.isOpened()) {
     capture_.release();
-    LOG_INFO("Webcam closed");
+    LOG_INFO("Webcam " + std::to_string(device_id_) + " closed");
   }
 }
 

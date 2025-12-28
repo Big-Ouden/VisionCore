@@ -60,9 +60,9 @@ bool VideoFileSource::readFrame(cv::Mat &frame) {
 void VideoFileSource::close() {
   if (capture_.isOpened()) {
     capture_.release();
-    LOG_INFO(video_path_ + "source closed");
+    LOG_INFO(video_path_ + " source closed");
   } else {
-    LOG_INFO(video_path_ + "source already closed");
+    LOG_INFO(video_path_ + " source already closed");
   }
 }
 
@@ -70,6 +70,6 @@ int VideoFileSource::getWidth() const { return configured_width_; }
 int VideoFileSource::getHeight() const { return configured_height_; }
 double VideoFileSource::getFPS() const { return configured_fps_; }
 bool VideoFileSource::isOpened() const { return capture_.isOpened(); }
-std::string VideoFileSource::getName() const { return "File" + video_path_; }
+std::string VideoFileSource::getName() const { return video_path_; }
 
 } // namespace visioncore::core

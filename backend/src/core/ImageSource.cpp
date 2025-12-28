@@ -39,7 +39,7 @@ bool ImageSource::readFrame(cv::Mat &frame) {
 void ImageSource::close() {
   if (is_opened_) {
     image_.release();
-    LOG_INFO("Image closed");
+    LOG_INFO(image_path_ + " closed");
   }
 }
 

@@ -38,9 +38,9 @@ private:
   cv::VideoCapture capture_; ///< OpenCV video capture handle for file I/O
   std::string video_path_;   ///< Filesystem path to the video file
 
-  bool loop_ = false;     ///< Auto-restart video when it ends
   int configured_width_;  ///< Actual frame width provided by video
   int configured_height_; ///< Actual frame height provided by video
   double configured_fps_; ///< Actual FPS provided by video
+  bool loop_ = false;     ///< Auto-restart video when it ends
 };
 } // namespace visioncore::core
