@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {
   } else if (sourceType == "--webcam") {
     source = std::make_unique<core::WebcamSource>(std::stoi(sourceParam));
   } else if (sourceType == "--video") {
-    source = std::make_unique<core::VideoFileSource>(sourceParam);
+    source = std::make_unique<core::VideoFileSource>(sourceParam, true);
   } else {
     LOG_CRITICAL("Unknown source type");
     printUsage(argv[0]);
