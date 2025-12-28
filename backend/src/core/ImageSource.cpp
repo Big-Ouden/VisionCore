@@ -47,6 +47,6 @@ int ImageSource::getHeight() const { return image_.rows; }
 int ImageSource::getWidth() const { return image_.cols; }
 double ImageSource::getFPS() const { return 0.0; }
 bool ImageSource::isOpened() const { return is_opened_; }
-std::string ImageSource::getName() const { return "Image " + image_path_; }
+std::string ImageSource::getName() const { return image_path_; }
 
 } // namespace visioncore::core
