@@ -1,4 +1,5 @@
 #include "../src/filters/GrayscaleFilter.hpp"
+#include "../src/filters/LUTFilter.hpp"
 #include "../src/filters/ResizeFilter.hpp"
 #include <gtest/gtest.h>
 #include <opencv2/opencv.hpp>
@@ -117,6 +118,8 @@ TEST_F(ResizeFilterTest, ConstructorWH) {
   ResizeFilter filter(320, 240);
   EXPECT_EQ(filter.getName(), "resize");
   EXPECT_TRUE(filter.isEnabled());
+  EXPECT_EQ(filter.getParameters()["width"], 320);
+  EXPECT_EQ(filter.getParameters()["height"], 240);
 }
 
 TEST_F(ResizeFilterTest, ConstructorScale) {
@@ -276,4 +279,258 @@ TEST_F(ResizeFilterTest, UnknownParameterIgnored) {
   auto params = filter.getParameters();
   EXPECT_EQ(params["width"], 640);
   EXPECT_EQ(params["height"], 480);
+}
+
+// ====================  LUTFilter Tests ====================
+
+class LUTFilterTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    // Create test image
+    test_image_ = cv::Mat(100, 100, CV_8UC3, cv::Scalar(255, 0, 0));
+    test_image_gray_ = cv::Mat(100, 100, CV_8UC1);
+  }
+
+  cv::Mat test_image_;
+  cv::Mat test_image_gray_;
+};
+
+TEST_F(LUTFilterTest, Constructor) {
+
+  LUTFilter filter;
+  EXPECT_EQ(filter.getName(), "lut");
+  EXPECT_TRUE(filter.isEnabled());
+}
+
+TEST_F(LUTFilterTest, ConstructorWithParameters) {
+  LUTFilter filter(LUTFilter::LUTType::CUSTOM, 1.0);
+  EXPECT_EQ(filter.getName(), "lut");
+  EXPECT_TRUE(filter.isEnabled());
+  EXPECT_EQ(filter.getParameters()["lut_type"], "custom");
+  EXPECT_EQ(filter.getParameters()["param"], 1.0);
+}
+
+TEST_F(LUTFilterTest, ApplyFilter) {
+  LUTFilter filter(LUTFilter::LUTType::INVERT, 1.0);
+  cv::Mat output;
+
+  filter.apply(test_image_, output);
+
+  EXPECT_FALSE(output.empty());
+  EXPECT_EQ(output.channels(), test_image_.channels());
+  EXPECT_EQ(output.rows, test_image_.rows);
+  EXPECT_EQ(output.cols, test_image_.cols);
+
+  cv::Mat diff;
+  cv::absdiff(output, test_image_, diff);
+  std::vector<cv::Mat> channels;
+  cv::split(diff, channels);
+  cv::Mat diff_gray = channels[0] | channels[1] | channels[2];
+  EXPECT_GT(cv::countNonZero(diff_gray),
+            0); // Il y a au moins un pixel différent
+
+  EXPECT_EQ(output.at<cv::Vec3b>(0, 0),
+            cv::Vec3b(0, 255, 255)); // Inverted blue
+}
+
+TEST_F(LUTFilterTest, ApplyToEmptyImage) {
+  cv::Mat empty_image;
+
+  LUTFilter filter(LUTFilter::LUTType::INVERT, 1.0);
+  filter.setEnabled(true);
+  cv::Mat output;
+  filter.apply(empty_image, output);
+
+  EXPECT_TRUE(empty_image.empty());
+  EXPECT_TRUE(output.empty());
+}
+
+TEST_F(LUTFilterTest, DisabledFilter) {
+  LUTFilter filter(LUTFilter::LUTType::INVERT, 1.0);
+  filter.setEnabled(false);
+
+  cv::Mat output;
+  filter.apply(test_image_, output);
+
+  // When disabled, should return clone of input
+  EXPECT_EQ(output.rows, test_image_.rows);
+  EXPECT_EQ(output.cols, test_image_.cols);
+  EXPECT_EQ(output.channels(), test_image_.channels());
+
+  cv::Mat diff;
+  cv::absdiff(output, test_image_, diff);
+  std::vector<cv::Mat> channels;
+  cv::split(diff, channels);
+  cv::Mat diff_gray = channels[0] | channels[1] | channels[2];
+  EXPECT_EQ(cv::countNonZero(diff_gray),
+            0); // Toutes les valeurs sont identiques
+}
+
+TEST_F(LUTFilterTest, SetParameter) {
+  LUTFilter filter(LUTFilter::LUTType::GAMMA, 2.2);
+  nlohmann::json value = 1.5;
+  filter.setParameter("param", value);
+  auto params = filter.getParameters();
+  ASSERT_TRUE(params.contains("param"));
+  EXPECT_DOUBLE_EQ(params["param"], 1.5);
+
+  filter.setParameter("lut_type", "invert");
+  params = filter.getParameters();
+  ASSERT_TRUE(params.contains("lut_type"));
+  EXPECT_EQ(params["lut_type"], "invert");
+}
+
+TEST_F(LUTFilterTest, GetParameters) {
+  LUTFilter filter(LUTFilter::LUTType::BRIGHTNESS, 0.8);
+  auto params = filter.getParameters();
+  ASSERT_TRUE(params.contains("lut_type"));
+  ASSERT_TRUE(params.contains("param"));
+  ASSERT_TRUE(params.contains("enabled"));
+  EXPECT_EQ(params["lut_type"], "brightness");
+  EXPECT_DOUBLE_EQ(params["param"], 0.8);
+  EXPECT_TRUE(params["enabled"].is_boolean());
+}
+
+TEST_F(LUTFilterTest, GetName) {
+  LUTFilter filter(LUTFilter::LUTType::INVERT, 1.0);
+  EXPECT_EQ(filter.getName(), "lut");
+}
+
+TEST_F(LUTFilterTest, UpdateLUT_Indirect) {
+  LUTFilter filter(LUTFilter::LUTType::CONTRAST, 1.0);
+  nlohmann::json value = 2.0;
+  filter.setParameter("param", value); // Should trigger updateLUT internally
+  cv::Mat output;
+  filter.apply(test_image_, output);
+  EXPECT_EQ(output.rows, test_image_.rows);
+  EXPECT_EQ(output.cols, test_image_.cols);
+}
+
+TEST_F(LUTFilterTest, SetCustomLUT) {
+  LUTFilter filter;
+  nlohmann::json custom_lut = nlohmann::json::array();
+  for (int i = 0; i < 256; ++i)
+    custom_lut.push_back(255 - i);
+  filter.setParameter("custom_lut", custom_lut);
+  auto params = filter.getParameters();
+  EXPECT_EQ(params["lut_type"], "custom");
+}
+
+TEST_F(LUTFilterTest, SetLUTTypeIdentity) {
+  LUTFilter filter(LUTFilter::LUTType::INVERT, 1.0);
+  filter.setParameter("lut_type", "identity");
+
+  cv::Mat output;
+  filter.apply(test_image_, output);
+
+  cv::Mat diff;
+  cv::absdiff(output, test_image_, diff);
+  EXPECT_EQ(cv::countNonZero(diff.reshape(1)), 0);
+}
+
+TEST_F(LUTFilterTest, LogarithmicLUT) {
+  cv::Mat input(1, 256, CV_8UC1);
+  for (int i = 0; i < 256; ++i)
+    input.at<uint8_t>(i) = static_cast<uint8_t>(i);
+
+  LUTFilter filter;
+  filter.setParameter("lut_type", "logarithmic");
+
+  cv::Mat output;
+  filter.apply(input, output);
+
+  EXPECT_EQ(output.at<uint8_t>(0), 0);
+  EXPECT_LT(output.at<uint8_t>(1), output.at<uint8_t>(10));
+  EXPECT_LT(output.at<uint8_t>(10), output.at<uint8_t>(100));
+  EXPECT_LT(output.at<uint8_t>(100), output.at<uint8_t>(200));
+}
+
+TEST_F(LUTFilterTest, ExponentialLUT) {
+  cv::Mat input(1, 256, CV_8UC1);
+  for (int i = 0; i < 256; ++i)
+    input.at<uint8_t>(i) = static_cast<uint8_t>(i);
+
+  LUTFilter filter;
+  filter.setParameter("lut_type", "exponential");
+
+  cv::Mat output;
+  filter.apply(input, output);
+
+  EXPECT_EQ(output.at<uint8_t>(0), 0);
+  EXPECT_LT(output.at<uint8_t>(10), output.at<uint8_t>(50));
+  EXPECT_LT(output.at<uint8_t>(50), output.at<uint8_t>(200));
+}
+
+TEST_F(LUTFilterTest, ThresholdBinaryLUT) {
+  LUTFilter filter;
+  filter.setParameter("lut_type", "threshold");
+  filter.setParameter("param", 128.0);
+
+  cv::Mat input(1, 3, CV_8UC1);
+  input.at<uint8_t>(0) = 50;
+  input.at<uint8_t>(1) = 128;
+  input.at<uint8_t>(2) = 200;
+
+  cv::Mat output;
+  filter.apply(input, output);
+
+  EXPECT_EQ(output.at<uint8_t>(0), 50);
+  EXPECT_EQ(output.at<uint8_t>(1), 255);
+  EXPECT_EQ(output.at<uint8_t>(2), 255);
+}
+
+TEST_F(LUTFilterTest, GammaDarkeningAndBrightening) {
+  cv::Mat input(1, 1, CV_8UC1);
+  input.at<uint8_t>(0, 0) = 128;
+
+  LUTFilter dark(LUTFilter::LUTType::GAMMA, 2.0);
+  LUTFilter bright(LUTFilter::LUTType::GAMMA, 0.5);
+
+  cv::Mat out_dark, out_bright;
+  dark.apply(input, out_dark);
+  bright.apply(input, out_bright);
+
+  EXPECT_LT(out_dark.at<uint8_t>(0, 0), 128);
+  EXPECT_GT(out_bright.at<uint8_t>(0, 0), 128);
+  EXPECT_LT(out_dark.at<uint8_t>(0, 0), out_bright.at<uint8_t>(0, 0));
+}
+
+TEST_F(LUTFilterTest, InvalidCustomLUTSize) {
+  LUTFilter filter;
+  nlohmann::json bad_lut = nlohmann::json::array({0, 1, 2});
+
+  filter.setParameter("custom_lut", bad_lut);
+
+  auto params = filter.getParameters();
+  EXPECT_NE(params["lut_type"], "custom");
+}
+
+TEST_F(LUTFilterTest, UnknownParameter) {
+  LUTFilter filter;
+  filter.setParameter("unknown_param", 42);
+
+  auto params = filter.getParameters();
+  EXPECT_TRUE(params.contains("lut_type"));
+}
+
+TEST_F(LUTFilterTest, AllLUTTypeStrings) {
+  struct {
+    std::string input;
+    std::string expected;
+  } cases[] = {
+      {"identity", "identity"},
+      {"invert", "invert"},
+      {"contrast", "contrast"},
+      {"brightness", "brightness"},
+      {"gamma", "gamma"},
+      {"logarithmic", "logarithmic"},
+      {"exponential", "exponential"},
+      {"threshold", "threshold_binary"},
+  };
+
+  for (const auto &c : cases) {
+    LUTFilter filter;
+    filter.setParameter("lut_type", c.input);
+    EXPECT_EQ(filter.getParameters()["lut_type"], c.expected);
+  }
 }
