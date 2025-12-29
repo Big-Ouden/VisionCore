@@ -21,6 +21,7 @@
 
 // Filters
 #include "filters/GrayscaleFilter.hpp"
+#include "filters/LUTFilter.hpp"
 #include "filters/ResizeFilter.hpp"
 
 // Pipeline
@@ -124,6 +125,14 @@ int main(int argc, char *argv[]) {
   pipeline::FramePipeline pipeline("main");
   pipeline::FramePipeline pipelineOriginal("original");
 
+  auto grayscaleFilter = std::make_shared<filters::GrayscaleFilter>();
+
+  unwrap_or_exit(pipeline.addFilter(grayscaleFilter), "Add GrayscaleFilter");
+
+  auto lutFilter =
+      std::make_shared<filters::LUTFilter>(filters::LUTFilter::LUTType::INVERT);
+  unwrap_or_exit(pipeline.addFilter(lutFilter), "Add lutFilter");
+
   unwrap_or_exit(
       pipeline.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
       "Add ResizeFilter");
@@ -131,10 +140,6 @@ int main(int argc, char *argv[]) {
   unwrap_or_exit(
       pipelineOriginal.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
       "Add ResizeFilter");
-
-  auto grayscaleFilter = std::make_shared<filters::GrayscaleFilter>();
-
-  unwrap_or_exit(pipeline.addFilter(grayscaleFilter), "Add GrayscaleFilter");
 
   /* ------------------------------------------------------------
    * Main loop
@@ -259,6 +264,13 @@ int main(int argc, char *argv[]) {
                  (grayscaleFilter->isEnabled() ? "enabled" : "disabled"));
         break;
 
+      case 'i':
+      case 'I':
+        lutFilter->setEnabled(!lutFilter->isEnabled());
+        LOG_INFO(std::string("Lutfilter : ") +
+                 (lutFilter->isEnabled() ? "enabled" : "disabled"));
+
+        break;
       case 'q':
       case 'Q':
       case 27:
