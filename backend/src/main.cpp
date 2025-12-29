@@ -21,6 +21,7 @@
 
 // Filters
 #include "filters/GrayscaleFilter.hpp"
+#include "filters/LUTFilter.hpp"
 #include "filters/ResizeFilter.hpp"
 
 // Pipeline
@@ -124,6 +125,14 @@ int main(int argc, char *argv[]) {
   pipeline::FramePipeline pipeline("main");
   pipeline::FramePipeline pipelineOriginal("original");
 
+  auto grayscaleFilter = std::make_shared<filters::GrayscaleFilter>();
+
+  unwrap_or_exit(pipeline.addFilter(grayscaleFilter), "Add GrayscaleFilter");
+
+  auto lutFilter =
+      std::make_shared<filters::LUTFilter>(filters::LUTFilter::LUTType::INVERT);
+  unwrap_or_exit(pipeline.addFilter(lutFilter), "Add lutFilter");
+
   unwrap_or_exit(
       pipeline.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
       "Add ResizeFilter");
@@ -131,10 +140,6 @@ int main(int argc, char *argv[]) {
   unwrap_or_exit(
       pipelineOriginal.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
       "Add ResizeFilter");
-
-  auto grayscaleFilter = std::make_shared<filters::GrayscaleFilter>();
-
-  unwrap_or_exit(pipeline.addFilter(grayscaleFilter), "Add GrayscaleFilter");
 
   /* ------------------------------------------------------------
    * Main loop
@@ -257,6 +262,39 @@ int main(int argc, char *argv[]) {
         grayscaleFilter->setEnabled(!grayscaleFilter->isEnabled());
         LOG_INFO(std::string("Grayscale filter: ") +
                  (grayscaleFilter->isEnabled() ? "enabled" : "disabled"));
+        break;
+
+      case '1':
+        lutFilter->setParameter("lut_type", "invert");
+        LOG_INFO("LUT filter set to INVERT");
+        break;
+      case '2':
+        lutFilter->setParameter("lut_type", "contrast");
+        lutFilter->setParameter("param", 2.0);
+        LOG_INFO("LUT filter set to CONTRAST (2.0)");
+        break;
+      case '3':
+        lutFilter->setParameter("lut_type", "brightness");
+        lutFilter->setParameter("param", 1.5);
+        LOG_INFO("LUT filter set to BRIGHTNESS (1.5)");
+        break;
+      case '4':
+        lutFilter->setParameter("lut_type", "gamma");
+        lutFilter->setParameter("param", 0.5);
+        LOG_INFO("LUT filter set to GAMMA (0.5)");
+        break;
+      case '5':
+        lutFilter->setParameter("lut_type", "logarithmic");
+        LOG_INFO("LUT filter set to LOGARITHMIC");
+        break;
+      case '6':
+        lutFilter->setParameter("lut_type", "exponential");
+        LOG_INFO("LUT filter set to EXPONENTIAL");
+        break;
+      case '7':
+        lutFilter->setParameter("lut_type", "threshold");
+        lutFilter->setParameter("param", 128);
+        LOG_INFO("LUT filter set to THRESHOLD_BINARY (128)");
         break;
 
       case 'q':
