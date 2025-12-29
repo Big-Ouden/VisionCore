@@ -9,8 +9,16 @@
 
 namespace visioncore::filters {
 
-ResizeFilter::ResizeFilter(const int width, const int height)
-    : desired_width_(width), desired_height_(height) {}
+ResizeFilter::ResizeFilter(int width, int height)
+    : desired_width_(width), desired_height_(height), scale_(0.0) {}
+
+ResizeFilter::ResizeFilter(double scale)
+    : desired_width_(0), desired_height_(0), scale_(scale) {
+
+  if (scale_ <= 0.0) {
+    throw std::invalid_argument("Resize scale must be > 0");
+  }
+}
 
 ResizeFilter::~ResizeFilter() = default;
 
@@ -21,6 +29,23 @@ void ResizeFilter::apply(const cv::Mat &input, cv::Mat &output) {
     return;
   }
 
+  // Mode SCALE
+  if (scale_ > 0.0) {
+
+    int newWidth = static_cast<int>(input.cols * scale_);
+    int newHeight = static_cast<int>(input.rows * scale_);
+
+    if (newWidth <= 0 || newHeight <= 0) {
+      LOG_ERROR("Invalid resize result from scale");
+      output = input.clone();
+      return;
+    }
+
+    cv::resize(input, output, cv::Size(newWidth, newHeight));
+    return;
+  }
+
+  // Mode WIDTH / HEIGHT
   if (input.cols == desired_width_ && input.rows == desired_height_) {
     output = input.clone();
     return;
@@ -54,6 +79,14 @@ void ResizeFilter::setParameter(const std::string &name,
     desired_height_ = new_value;
     LOG_DEBUG("Height changed from " + std::to_string(old_value) + " to " +
               std::to_string(desired_height_));
+
+  } else if (name == "scale") {
+    double s = value.get<double>();
+    if (s <= 0.0) {
+      LOG_WARNING("Invalid scale value");
+      return;
+    }
+    scale_ = s;
   } else {
     LOG_WARNING("Unknown parameter: " + name);
   }

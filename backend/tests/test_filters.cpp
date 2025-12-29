@@ -113,13 +113,19 @@ protected:
   cv::Mat test_image_;
 };
 
-TEST_F(ResizeFilterTest, Constructor) {
+TEST_F(ResizeFilterTest, ConstructorWH) {
   ResizeFilter filter(320, 240);
   EXPECT_EQ(filter.getName(), "resize");
   EXPECT_TRUE(filter.isEnabled());
 }
 
-TEST_F(ResizeFilterTest, ApplyResize) {
+TEST_F(ResizeFilterTest, ConstructorScale) {
+  ResizeFilter filter(0.5);
+  EXPECT_EQ(filter.getName(), "resize");
+  EXPECT_TRUE(filter.isEnabled());
+}
+
+TEST_F(ResizeFilterTest, ApplyResizeWH) {
   ResizeFilter filter(320, 240);
   cv::Mat output;
 
@@ -128,6 +134,52 @@ TEST_F(ResizeFilterTest, ApplyResize) {
   EXPECT_FALSE(output.empty());
   EXPECT_EQ(output.cols, 320);
   EXPECT_EQ(output.rows, 240);
+}
+
+TEST_F(ResizeFilterTest, ApplyResizeScale) {
+  ResizeFilter filter(0.5);
+  cv::Mat output;
+
+  filter.apply(test_image_, output);
+
+  EXPECT_FALSE(output.empty());
+  EXPECT_EQ(output.cols, 320); // 640 * 0.5
+  EXPECT_EQ(output.rows, 240); // 480 * 0.5
+}
+
+TEST_F(ResizeFilterTest, SetParameterScale) {
+  ResizeFilter filter(640, 480);
+  filter.setParameter("scale", 0.25);
+
+  cv::Mat output;
+  filter.apply(test_image_, output);
+
+  EXPECT_EQ(output.cols, 160); // 640 * 0.25
+  EXPECT_EQ(output.rows, 120); // 480 * 0.25
+}
+
+TEST_F(ResizeFilterTest, InvalidScaleIgnored) {
+  ResizeFilter filter(640, 480);
+  filter.setParameter("scale", -1.0); // Invalid scale
+
+  cv::Mat output;
+  filter.apply(test_image_, output);
+
+  // Should remain original size since invalid scale was ignored
+  EXPECT_EQ(output.cols, 640);
+  EXPECT_EQ(output.rows, 480);
+}
+
+TEST_F(ResizeFilterTest, SetParameterScaleZeroIgnored) {
+  ResizeFilter filter(640, 480);
+  filter.setParameter("scale", 0.0); // Invalid scale
+
+  cv::Mat output;
+  filter.apply(test_image_, output);
+
+  // Should remain original size since invalid scale was ignored
+  EXPECT_EQ(output.cols, 640);
+  EXPECT_EQ(output.rows, 480);
 }
 
 TEST_F(ResizeFilterTest, SetParameterWidth) {

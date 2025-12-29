@@ -15,6 +15,7 @@
 
 // Core
 #include "core/ImageSource.hpp"
+#include "core/VideoFileSource.hpp"
 #include "core/VideoSource.hpp"
 #include "core/WebcamSource.hpp"
 
@@ -28,6 +29,11 @@
 
 // Utils
 #include "utils/Logger.hpp"
+
+#include <chrono>
+#include <thread>
+
+using Clock = std::chrono::steady_clock;
 
 using namespace visioncore;
 
@@ -62,6 +68,7 @@ inline void unwrap_or_exit(pipeline::PipelineResult<void> &&res,
 void printUsage(const std::string &programName) {
   std::cout << "Usage:\n"
             << "  " << programName << " --image <path>\n"
+            << "  " << programName << " --video <path>\n"
             << "  " << programName << " --webcam <device_id>\n";
 }
 
@@ -92,6 +99,8 @@ int main(int argc, char *argv[]) {
     source = std::make_unique<core::ImageSource>(sourceParam);
   } else if (sourceType == "--webcam") {
     source = std::make_unique<core::WebcamSource>(std::stoi(sourceParam));
+  } else if (sourceType == "--video") {
+    source = std::make_unique<core::VideoFileSource>(sourceParam, true);
   } else {
     LOG_CRITICAL("Unknown source type");
     printUsage(argv[0]);
@@ -113,9 +122,14 @@ int main(int argc, char *argv[]) {
    * ------------------------------------------------------------ */
 
   pipeline::FramePipeline pipeline("main");
+  pipeline::FramePipeline pipelineOriginal("original");
 
   unwrap_or_exit(
-      pipeline.addFilter(std::make_shared<filters::ResizeFilter>(640, 480)),
+      pipeline.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
+      "Add ResizeFilter");
+
+  unwrap_or_exit(
+      pipelineOriginal.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
       "Add ResizeFilter");
 
   auto grayscaleFilter = std::make_shared<filters::GrayscaleFilter>();
@@ -126,20 +140,51 @@ int main(int argc, char *argv[]) {
    * Main loop
    * ------------------------------------------------------------ */
 
+#include <chrono>
+#include <thread>
+
+  using clock = std::chrono::steady_clock;
+
   cv::Mat frame;
   cv::Mat processed;
 
   char displayMode = 'h'; // h = concat, o = original, f = filtered
   bool running = true;
 
+  /* ------------------------------------------------------------
+   * Timing configuration
+   * ------------------------------------------------------------ */
+
+  const double fps = source->getFPS();
+  const double effectiveFps = (fps > 1.0 ? fps : 30.0);
+
+  const auto frameDuration = std::chrono::duration<double>(1.0 / effectiveFps);
+
+  auto nextFrameTime = clock::now();
+
+  /* ------------------------------------------------------------
+   * Loop
+   * ------------------------------------------------------------ */
+
   while (running) {
 
+    nextFrameTime += std::chrono::duration_cast<Clock::duration>(frameDuration);
+
+    /* ----------------------------------------------------------
+     * Frame acquisition
+     * ---------------------------------------------------------- */
+
     if (!source->readFrame(frame)) {
-      LOG_WARNING("Failed to read frame");
+      LOG_INFO("End of video stream");
       break;
     }
 
+    /* ----------------------------------------------------------
+     * Processing
+     * ---------------------------------------------------------- */
+
     pipeline.process(frame, processed);
+    pipelineOriginal.process(frame, frame);
 
     /* ----------------------------------------------------------
      * Safe color handling
@@ -182,42 +227,51 @@ int main(int argc, char *argv[]) {
 
     cv::imshow(source->getName(), display);
 
+    /* ----------------------------------------------------------
+     * Keyboard handling (non-blocking)
+     * ---------------------------------------------------------- */
+
     int key = cv::waitKey(1);
-    if (key == -1)
-      continue;
+    if (key != -1) {
+      switch (key) {
+      case 'h':
+      case 'H':
+        displayMode = 'h';
+        LOG_INFO("Display mode: side-by-side");
+        break;
 
-    switch (key) {
-    case 'h':
-    case 'H':
-      displayMode = 'h';
-      LOG_INFO("Display mode: side-by-side");
-      break;
+      case 'o':
+      case 'O':
+        displayMode = 'o';
+        LOG_INFO("Display mode: original");
+        break;
 
-    case 'o':
-    case 'O':
-      displayMode = 'o';
-      LOG_INFO("Display mode: original");
-      break;
+      case 'f':
+      case 'F':
+        displayMode = 'f';
+        LOG_INFO("Display mode: filtered");
+        break;
 
-    case 'f':
-    case 'F':
-      displayMode = 'f';
-      LOG_INFO("Display mode: filtered");
-      break;
+      case 'g':
+      case 'G':
+        grayscaleFilter->setEnabled(!grayscaleFilter->isEnabled());
+        LOG_INFO(std::string("Grayscale filter: ") +
+                 (grayscaleFilter->isEnabled() ? "enabled" : "disabled"));
+        break;
 
-    case 'g':
-    case 'G':
-      grayscaleFilter->setEnabled(!grayscaleFilter->isEnabled());
-      LOG_INFO(std::string("Grayscale filter: ") +
-               (grayscaleFilter->isEnabled() ? "enabled" : "disabled"));
-      break;
-
-    case 'q':
-    case 'Q':
-    case 27:
-      running = false;
-      break;
+      case 'q':
+      case 'Q':
+      case 27:
+        running = false;
+        break;
+      }
     }
+
+    /* ----------------------------------------------------------
+     * Frame pacing
+     * ---------------------------------------------------------- */
+
+    std::this_thread::sleep_until(nextFrameTime);
   }
 
   /* ------------------------------------------------------------

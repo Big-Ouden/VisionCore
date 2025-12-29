@@ -1,4 +1,5 @@
 #include "../src/core/ImageSource.hpp"
+#include "../src/core/VideoFileSource.hpp"
 #include "../src/core/WebcamSource.hpp"
 #include <gtest/gtest.h>
 #include <opencv2/opencv.hpp>
@@ -55,7 +56,7 @@ TEST_F(ImageSourceTest, GetName) {
   std::string name = source.getName();
 
   EXPECT_FALSE(name.empty());
-  EXPECT_NE(name.find("Image"), std::string::npos);
+  EXPECT_EQ("/tmp/test_image.jpg", name);
 }
 
 TEST_F(ImageSourceTest, ReadFrame) {
@@ -211,4 +212,140 @@ TEST_F(WebcamSourceTest, CloseWebcam) {
 
   webcam.close();
   EXPECT_FALSE(webcam.isOpened());
+}
+
+// ==================== VideoFileSource Tests ====================
+class VideoFileSourceTest : public ::testing::Test {
+protected:
+  void SetUp() override {
+    // Create a test video file before each test
+    cv::VideoWriter writer("/tmp/test_video.mp4",
+                           cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 30,
+                           cv::Size(100, 100));
+    for (int i = 0; i < 60; ++i) {
+      cv::Mat frame(100, 100, CV_8UC3, cv::Scalar(i * 4, i * 4, i * 4));
+      writer.write(frame);
+    }
+    writer.release();
+  }
+};
+
+TEST_F(VideoFileSourceTest, Constructor) {
+  VideoFileSource video("/tmp/test_video.mp4");
+  std::string name = video.getName();
+
+  EXPECT_FALSE(name.empty());
+  EXPECT_EQ("/tmp/test_video.mp4", name);
+}
+
+TEST_F(VideoFileSourceTest, ConstructorLoopEnabled) {
+  VideoFileSource video("/tmp/test_video.mp4", true);
+  std::string name = video.getName();
+
+  EXPECT_FALSE(name.empty());
+  EXPECT_EQ("/tmp/test_video.mp4", name);
+  EXPECT_TRUE(video.isLoopEnabled());
+}
+
+TEST_F(VideoFileSourceTest, OpenInvalidVideo) {
+  VideoFileSource video("nonexistent_file.mp4");
+  EXPECT_FALSE(video.open());
+  EXPECT_FALSE(video.isOpened());
+}
+
+TEST_F(VideoFileSourceTest, OpenValidVideo) {
+  VideoFileSource video("/tmp/test_video.mp4", true);
+  EXPECT_TRUE(video.open());
+  EXPECT_TRUE(video.isOpened());
+}
+
+TEST_F(VideoFileSourceTest, GetVideoProperties) {
+  VideoFileSource video("/tmp/test_video.mp4");
+  video.open();
+
+  EXPECT_EQ(video.getWidth(), 100);
+  EXPECT_EQ(video.getHeight(), 100);
+  EXPECT_DOUBLE_EQ(video.getFPS(), 30.0);
+}
+
+TEST_F(VideoFileSourceTest, getName) {
+  VideoFileSource video("/tmp/test_video.mp4");
+  std::string name = video.getName();
+
+  EXPECT_FALSE(name.empty());
+  EXPECT_EQ("/tmp/test_video.mp4", name);
+}
+
+TEST_F(VideoFileSourceTest, ReadFrames) {
+  VideoFileSource video("/tmp/test_video.mp4");
+  video.open();
+
+  cv::Mat frame;
+  int frame_count = 0;
+  while (video.readFrame(frame)) {
+    EXPECT_FALSE(frame.empty());
+    EXPECT_EQ(frame.rows, 100);
+    EXPECT_EQ(frame.cols, 100);
+    frame_count++;
+  }
+
+  EXPECT_EQ(frame_count, 60); // 60 frames in test video
+}
+
+TEST_F(VideoFileSourceTest, ReadFrameLoopDisabled) {
+  VideoFileSource video("/tmp/test_video.mp4", false);
+  video.open();
+
+  cv::Mat frame;
+  int frame_count = 0;
+  while (video.readFrame(frame)) {
+    frame_count++;
+  }
+
+  EXPECT_EQ(frame_count, 60); // 60 frames in test video
+
+  // Next read should fail (EOF)
+  EXPECT_FALSE(video.readFrame(frame));
+}
+
+TEST_F(VideoFileSourceTest, ReadFrameLoopEnabled) {
+  VideoFileSource video("/tmp/test_video.mp4", true);
+  video.open();
+
+  cv::Mat frame;
+  int total_frames_to_read = 120; // Read twice the video length
+  int frame_count = 0;
+  for (int i = 0; i < total_frames_to_read; ++i) {
+    EXPECT_TRUE(video.readFrame(frame));
+    EXPECT_FALSE(frame.empty());
+    frame_count++;
+  }
+
+  EXPECT_EQ(frame_count, total_frames_to_read);
+}
+
+TEST_F(VideoFileSourceTest, ReadFrameBeforeOpen) {
+  VideoFileSource video("/tmp/test_video.mp4");
+  cv::Mat frame;
+
+  // Should fail if not opened
+  EXPECT_FALSE(video.readFrame(frame));
+}
+
+TEST_F(VideoFileSourceTest, CloseVideo) {
+  VideoFileSource video("/tmp/test_video.mp4");
+  video.open();
+  EXPECT_TRUE(video.isOpened());
+
+  video.close();
+  EXPECT_FALSE(video.isOpened());
+}
+
+TEST_F(VideoFileSourceTest, CloseVideoNotOpened) {
+  VideoFileSource video("/tmp/test_video.mp4");
+  // video.open();
+  EXPECT_FALSE(video.isOpened());
+
+  // Should not crash or throw
+  video.close();
 }
