@@ -40,3 +40,23 @@ target_link_libraries(test_sources PRIVATE
 )
 gtest_discover_tests(test_sources)
 
+
+# Test FrameController
+add_executable(test_framecontroller test_framecontroller.cpp)
+target_link_libraries(test_framecontroller PRIVATE 
+  visioncore 
+  GTest::GTest 
+  GTest::Main
+)
+gtest_discover_tests(test_framecontroller)
+
+# Test FrameController Stop
+add_executable(test_framecontroller_stop test_framecontroller_stop.cpp)
+target_link_libraries(test_framecontroller_stop PRIVATE 
+  visioncore 
+  GTest::GTest 
+  GTest::Main
+)
+gtest_discover_tests(test_framecontroller_stop)
+
+
