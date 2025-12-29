@@ -264,13 +264,39 @@ int main(int argc, char *argv[]) {
                  (grayscaleFilter->isEnabled() ? "enabled" : "disabled"));
         break;
 
-      case 'i':
-      case 'I':
-        lutFilter->setEnabled(!lutFilter->isEnabled());
-        LOG_INFO(std::string("Lutfilter : ") +
-                 (lutFilter->isEnabled() ? "enabled" : "disabled"));
-
+      case '1':
+        lutFilter->setParameter("lut_type", "invert");
+        LOG_INFO("LUT filter set to INVERT");
         break;
+      case '2':
+        lutFilter->setParameter("lut_type", "contrast");
+        lutFilter->setParameter("param", 2.0);
+        LOG_INFO("LUT filter set to CONTRAST (2.0)");
+        break;
+      case '3':
+        lutFilter->setParameter("lut_type", "brightness");
+        lutFilter->setParameter("param", 1.5);
+        LOG_INFO("LUT filter set to BRIGHTNESS (1.5)");
+        break;
+      case '4':
+        lutFilter->setParameter("lut_type", "gamma");
+        lutFilter->setParameter("param", 0.5);
+        LOG_INFO("LUT filter set to GAMMA (0.5)");
+        break;
+      case '5':
+        lutFilter->setParameter("lut_type", "logarithmic");
+        LOG_INFO("LUT filter set to LOGARITHMIC");
+        break;
+      case '6':
+        lutFilter->setParameter("lut_type", "exponential");
+        LOG_INFO("LUT filter set to EXPONENTIAL");
+        break;
+      case '7':
+        lutFilter->setParameter("lut_type", "threshold");
+        lutFilter->setParameter("param", 128);
+        LOG_INFO("LUT filter set to THRESHOLD_BINARY (128)");
+        break;
+
       case 'q':
       case 'Q':
       case 27:
