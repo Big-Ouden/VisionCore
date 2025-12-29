@@ -44,7 +44,7 @@ public:
   void critical(const std::string &msg) { log(LogLevel::CRITICAL, msg); }
 
 private:
-  Logger() : min_level_(LogLevel::DEBUG) {}
+  Logger() : min_level_(LogLevel::INFO) {}
   LogLevel min_level_;
   std::mutex mutex_;
 
