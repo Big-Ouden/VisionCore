@@ -36,6 +36,7 @@
 
 // Processing
 #include "processing/FrameController.hpp"
+#include "processing/FrameEncoder.hpp"
 
 // Utils
 #include "utils/Logger.hpp"
@@ -54,9 +55,8 @@ void signalHandler(int signal) {
 }
 
 /* ============================================================
- * Error handling helpers
+ * Error helpers
  * ============================================================ */
-
 template <typename T>
 T unwrap_or_exit(pipeline::PipelineResult<T> &&res,
                  const std::string &context) {
@@ -80,7 +80,6 @@ inline void unwrap_or_exit(pipeline::PipelineResult<void> &&res,
 /* ============================================================
  * Usage
  * ============================================================ */
-
 void printUsage(const std::string &programName) {
   std::cout << "Usage:\n"
             << "  " << programName
@@ -97,7 +96,6 @@ void printUsage(const std::string &programName) {
 /* ============================================================
  * Main
  * ============================================================ */
-
 int main(int argc, char *argv[]) {
   // Setup signal handlers
   std::signal(SIGINT, signalHandler);
@@ -128,10 +126,6 @@ int main(int argc, char *argv[]) {
 
   LOG_INFO("=== VisionCore WebSocket Streaming ===");
 
-  /* ------------------------------------------------------------
-   * Source creation
-   * ------------------------------------------------------------ */
-
   std::unique_ptr<core::VideoSource> source;
 
   if (sourceType == "--image") {
@@ -158,10 +152,7 @@ int main(int argc, char *argv[]) {
    * ------------------------------------------------------------ */
   processing::FrameController controller;
 
-  /* ------------------------------------------------------------
-   * Pipeline configuration
-   * ------------------------------------------------------------ */
-
+  // --- Pipeline setup ---
   auto &pipeline = controller.getPipeline();
 
   auto resize = std::make_shared<filters::ResizeFilter>(0.5); // 50% scale
@@ -193,6 +184,7 @@ int main(int argc, char *argv[]) {
    * Frame callback with WebSocket streaming
    * ------------------------------------------------------------ */
 
+  // --- Frame callback for display ---
   cv::Mat last_original;
   cv::Mat last_processed;
   std::mutex frame_mutex;
@@ -223,9 +215,8 @@ int main(int argc, char *argv[]) {
   });
 
   /* ------------------------------------------------------------
-   * Start processing engine
+   * Start engine
    * ------------------------------------------------------------ */
-
   controller.start(std::move(source), 30.0);
 
   LOG_INFO("\nControls:");
@@ -242,7 +233,7 @@ int main(int argc, char *argv[]) {
   LOG_INFO("  q / ESC : quit");
 
   /* ------------------------------------------------------------
-   * UI loop (main thread only)
+   * UI loop (main thread)
    * ------------------------------------------------------------ */
 
   int frameDisplayCount = 0;
@@ -253,7 +244,6 @@ int main(int argc, char *argv[]) {
     // Display frame locally if enabled
     if (showDisplay && frame_available.load(std::memory_order_acquire)) {
       cv::Mat o, p;
-
       {
         std::lock_guard<std::mutex> lock(frame_mutex);
         o = last_original.clone();
@@ -338,41 +328,34 @@ int main(int argc, char *argv[]) {
       lut->setParameter("lut_type", "invert");
       LOG_INFO("LUT: invert");
       break;
-
     case '2':
       lut->setParameter("lut_type", "contrast");
       lut->setParameter("param", 2.0);
       LOG_INFO("LUT: contrast (2.0)");
       break;
-
     case '3':
       lut->setParameter("lut_type", "brightness");
       lut->setParameter("param", 50.0);
       LOG_INFO("LUT: brightness (+50)");
       break;
-
     case '4':
       lut->setParameter("lut_type", "gamma");
       lut->setParameter("param", 0.5);
       LOG_INFO("LUT: gamma (0.5)");
       break;
-
     case '5':
       lut->setParameter("lut_type", "logarithmic");
       LOG_INFO("LUT: logarithmic");
       break;
-
     case '6':
       lut->setParameter("lut_type", "exponential");
       LOG_INFO("LUT: exponential");
       break;
-
     case '7':
       lut->setParameter("lut_type", "threshold_binary");
       lut->setParameter("param", 128.0);
       LOG_INFO("LUT: threshold (128)");
       break;
-
     case 'q':
     case 'Q':
     case 27: // ESC
