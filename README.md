@@ -4,6 +4,7 @@
     <img alt="GitHub repo size" src="https://img.shields.io/github/repo-size/Big-Ouden/VisionCore?style=for-the-badge"></img>
     <a href="https://belier.iiens.net"><img alt="Personal blog link" src="https://img.shields.io/badge/BLOG-belier.iiens.net-yellow?style=for-the-badge"></img></a>
     <img alt="GitHub last commit" src="https://img.shields.io/github/last-commit/Big-Ouden/VisionCore?style=for-the-badge">
+    <img alt="GitHub Actions Workflow Status" src="https://img.shields.io/github/actions/workflow/status/Big-Ouden/VisionCore/backend-ci.yml?branch=main&style=for-the-badge">
     <p>
     Open real-time visual processing engine (filters, computer vision, AI)
     </p>
