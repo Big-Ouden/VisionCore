@@ -9,9 +9,13 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 
 // Core
 #include "core/ImageSource.hpp"
@@ -27,6 +31,9 @@
 // Pipeline
 #include "pipeline/FramePipeline.hpp"
 #include "pipeline/PipelineError.hpp"
+
+// Processing
+#include "processing/FrameController.hpp"
 
 // Utils
 #include "utils/Logger.hpp"
@@ -119,209 +126,164 @@ int main(int argc, char *argv[]) {
   LOG_INFO("Press 'q' or ESC to quit");
 
   /* ------------------------------------------------------------
+   * Controller setup
+   * ------------------------------------------------------------ */
+  processing::FrameController controller;
+
+  /* ------------------------------------------------------------
    * Pipeline configuration
    * ------------------------------------------------------------ */
 
-  pipeline::FramePipeline pipeline("main");
-  pipeline::FramePipeline pipelineOriginal("original");
+  auto &pipeline = controller.getPipeline();
+  auto grayscale = std::make_shared<filters::GrayscaleFilter>();
+  unwrap_or_exit(pipeline.addFilter(grayscale), "Add Grayscale Filter");
 
-  auto grayscaleFilter = std::make_shared<filters::GrayscaleFilter>();
-
-  unwrap_or_exit(pipeline.addFilter(grayscaleFilter), "Add GrayscaleFilter");
-
-  auto lutFilter =
+  auto lut =
       std::make_shared<filters::LUTFilter>(filters::LUTFilter::LUTType::INVERT);
-  unwrap_or_exit(pipeline.addFilter(lutFilter), "Add lutFilter");
+  unwrap_or_exit(pipeline.addFilter(lut), "Add LUT Filter");
 
   unwrap_or_exit(
       pipeline.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
-      "Add ResizeFilter");
-
-  unwrap_or_exit(
-      pipelineOriginal.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
-      "Add ResizeFilter");
+      "Add Resize Filter");
 
   /* ------------------------------------------------------------
-   * Main loop
+   * Frame callback
    * ------------------------------------------------------------ */
 
-#include <chrono>
-#include <thread>
+  cv::Mat last_original;
+  cv::Mat last_processed;
+  std::mutex frame_mutex;
+  std::atomic<bool> frame_available{false};
 
-  using clock = std::chrono::steady_clock;
+  controller.setFrameCallback([&](const cv::Mat &original,
+                                  const cv::Mat &processed,
+                                  uint64_t /*frame_id*/) {
+    std::lock_guard<std::mutex> lock(frame_mutex);
+    last_original = original.clone();
+    last_processed = processed.clone();
+    frame_available.store(true, std::memory_order_release);
+  });
 
-  cv::Mat frame;
-  cv::Mat processed;
+  /* ------------------------------------------------------------
+   * Start processing engine
+   * ------------------------------------------------------------ */
 
-  char displayMode = 'h'; // h = concat, o = original, f = filtered
+  controller.start(std::move(source), 30.0);
+
+  LOG_INFO("Controls:");
+  LOG_INFO("  g : toggle grayscale");
+  LOG_INFO("  1 : invert");
+  LOG_INFO("  2 : contrast (2.0)");
+  LOG_INFO("  3 : brightness (+1.5)");
+  LOG_INFO("  4 : gamma (0.5)");
+  LOG_INFO("  5 : logarithmic");
+  LOG_INFO("  6 : exponential");
+  LOG_INFO("  7 : threshold (128)");
+  LOG_INFO("  q / ESC : quit");
+
+  /* ------------------------------------------------------------
+   * UI loop (main thread only)
+   * ------------------------------------------------------------ */
+
   bool running = true;
-
-  /* ------------------------------------------------------------
-   * Timing configuration
-   * ------------------------------------------------------------ */
-
-  const double fps = source->getFPS();
-  const double effectiveFps = (fps > 1.0 ? fps : 30.0);
-
-  const auto frameDuration = std::chrono::duration<double>(1.0 / effectiveFps);
-
-  auto nextFrameTime = clock::now();
-
-  /* ------------------------------------------------------------
-   * Loop
-   * ------------------------------------------------------------ */
 
   while (running) {
 
-    nextFrameTime += std::chrono::duration_cast<Clock::duration>(frameDuration);
+    if (frame_available.load(std::memory_order_acquire)) {
 
-    /* ----------------------------------------------------------
-     * Frame acquisition
-     * ---------------------------------------------------------- */
+      cv::Mat o, p;
 
-    if (!source->readFrame(frame)) {
-      LOG_INFO("End of video stream");
-      break;
-    }
+      {
+        std::lock_guard<std::mutex> lock(frame_mutex);
+        o = last_original;
+        p = last_processed;
+        frame_available.store(false, std::memory_order_release);
+      }
 
-    /* ----------------------------------------------------------
-     * Processing
-     * ---------------------------------------------------------- */
+      if (!o.empty() && !p.empty()) {
 
-    pipeline.process(frame, processed);
-    pipelineOriginal.process(frame, frame);
+        if (o.channels() == 1)
+          cv::cvtColor(o, o, cv::COLOR_GRAY2BGR);
 
-    /* ----------------------------------------------------------
-     * Safe color handling
-     * ---------------------------------------------------------- */
+        if (p.channels() == 1)
+          cv::cvtColor(p, p, cv::COLOR_GRAY2BGR);
 
-    cv::Mat frameBgr;
-    if (frame.channels() == 1) {
-      cv::cvtColor(frame, frameBgr, cv::COLOR_GRAY2BGR);
-    } else {
-      frameBgr = frame;
-    }
+        cv::Mat display;
+        cv::hconcat(o, p, display);
 
-    cv::Mat processedBgr;
-    if (processed.channels() == 1) {
-      cv::cvtColor(processed, processedBgr, cv::COLOR_GRAY2BGR);
-    } else {
-      processedBgr = processed;
-    }
-
-    /* ----------------------------------------------------------
-     * Display selection
-     * ---------------------------------------------------------- */
-
-    cv::Mat display;
-
-    switch (displayMode) {
-    case 'h':
-      cv::hconcat(frameBgr, processedBgr, display);
-      break;
-    case 'o':
-      display = frameBgr;
-      break;
-    case 'f':
-      display = processedBgr;
-      break;
-    default:
-      display = frameBgr;
-      break;
-    }
-
-    cv::imshow(source->getName(), display);
-
-    /* ----------------------------------------------------------
-     * Keyboard handling (non-blocking)
-     * ---------------------------------------------------------- */
-
-    int key = cv::waitKey(1);
-    if (key != -1) {
-      switch (key) {
-      case 'h':
-      case 'H':
-        displayMode = 'h';
-        LOG_INFO("Display mode: side-by-side");
-        break;
-
-      case 'o':
-      case 'O':
-        displayMode = 'o';
-        LOG_INFO("Display mode: original");
-        break;
-
-      case 'f':
-      case 'F':
-        displayMode = 'f';
-        LOG_INFO("Display mode: filtered");
-        break;
-
-      case 'g':
-      case 'G':
-        grayscaleFilter->setEnabled(!grayscaleFilter->isEnabled());
-        LOG_INFO(std::string("Grayscale filter: ") +
-                 (grayscaleFilter->isEnabled() ? "enabled" : "disabled"));
-        break;
-
-      case '1':
-        lutFilter->setParameter("lut_type", "invert");
-        LOG_INFO("LUT filter set to INVERT");
-        break;
-      case '2':
-        lutFilter->setParameter("lut_type", "contrast");
-        lutFilter->setParameter("param", 2.0);
-        LOG_INFO("LUT filter set to CONTRAST (2.0)");
-        break;
-      case '3':
-        lutFilter->setParameter("lut_type", "brightness");
-        lutFilter->setParameter("param", 1.5);
-        LOG_INFO("LUT filter set to BRIGHTNESS (1.5)");
-        break;
-      case '4':
-        lutFilter->setParameter("lut_type", "gamma");
-        lutFilter->setParameter("param", 0.5);
-        LOG_INFO("LUT filter set to GAMMA (0.5)");
-        break;
-      case '5':
-        lutFilter->setParameter("lut_type", "logarithmic");
-        LOG_INFO("LUT filter set to LOGARITHMIC");
-        break;
-      case '6':
-        lutFilter->setParameter("lut_type", "exponential");
-        LOG_INFO("LUT filter set to EXPONENTIAL");
-        break;
-      case '7':
-        lutFilter->setParameter("lut_type", "threshold");
-        lutFilter->setParameter("param", 128);
-        LOG_INFO("LUT filter set to THRESHOLD_BINARY (128)");
-        break;
-
-      case 'q':
-      case 'Q':
-      case 27:
-        running = false;
-        break;
+        cv::imshow("VisionCore", display);
       }
     }
 
-    /* ----------------------------------------------------------
-     * Frame pacing
-     * ---------------------------------------------------------- */
+    int key = cv::waitKey(10);
 
-    std::this_thread::sleep_until(nextFrameTime);
+    switch (key) {
+
+    case 'g':
+    case 'G':
+      grayscale->setEnabled(!grayscale->isEnabled());
+      LOG_INFO(std::string("Grayscale: ") +
+               (grayscale->isEnabled() ? "enabled" : "disabled"));
+      break;
+
+    case '1':
+      lut->setParameter("lut_type", "invert");
+      LOG_INFO("LUT: invert");
+      break;
+
+    case '2':
+      lut->setParameter("lut_type", "contrast");
+      lut->setParameter("param", 2.0);
+      LOG_INFO("LUT: contrast (2.0)");
+      break;
+
+    case '3':
+      lut->setParameter("lut_type", "brightness");
+      lut->setParameter("param", 1.5);
+      LOG_INFO("LUT: brightness (+1.5)");
+      break;
+
+    case '4':
+      lut->setParameter("lut_type", "gamma");
+      lut->setParameter("param", 0.5);
+      LOG_INFO("LUT: gamma (0.5)");
+      break;
+
+    case '5':
+      lut->setParameter("lut_type", "logarithmic");
+      LOG_INFO("LUT: logarithmic");
+      break;
+
+    case '6':
+      lut->setParameter("lut_type", "exponential");
+      LOG_INFO("LUT: exponential");
+      break;
+
+    case '7':
+      lut->setParameter("lut_type", "threshold");
+      lut->setParameter("param", 128);
+      LOG_INFO("LUT: threshold (128)");
+      break;
+
+    case 'q':
+    case 'Q':
+    case 27:
+      running = false;
+      break;
+    }
   }
 
   /* ------------------------------------------------------------
-   * Cleanup
+   * Shutdown
    * ------------------------------------------------------------ */
 
-  source->close();
+  controller.stop();
+
   cv::destroyAllWindows();
   cv::waitKey(100);
 
-  source.reset();
-
   LOG_INFO("Application terminated cleanly");
-  std::_Exit(EXIT_SUCCESS);
+
+  controller.stop();
+  return EXIT_SUCCESS;
 }

@@ -133,6 +133,9 @@ endif()
 find_program(LCOV_PATH lcov)
 find_program(GENHTML_PATH genhtml)
 
+
+file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
+
 if(LCOV_PATH AND GENHTML_PATH)
     message(STATUS "lcov found: ${LCOV_PATH}")
     message(STATUS "genhtml found: ${GENHTML_PATH}")
