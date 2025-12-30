@@ -35,7 +35,9 @@ jobs:
           libopencv-dev \
           qtbase5-dev \
           libgtest-dev \
-          nlohmann-json3-dev
+          nlohmann-json3-dev \
+          libuwebsockets-dev
+
 
     - name: Configure CMake
       run: |
@@ -78,7 +80,9 @@ jobs:
           qtbase5-dev \
           libgtest-dev \
           nlohmann-json3-dev \
-          lcov
+          lcov \
+          libuwebsockets-dev
+
 
     - name: Configure CMake with coverage
       run: |
