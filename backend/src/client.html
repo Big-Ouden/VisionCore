@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VisionCore WebSocket Client</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 30px;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .status.disconnected {
+            background: #fee;
+            color: #c00;
+        }
+
+        .status.connected {
+            background: #efe;
+            color: #0a0;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        button.connect {
+            background: #667eea;
+            color: white;
+        }
+
+        button.disconnect {
+            background: #f56565;
+            color: white;
+        }
+
+        #canvas {
+            width: 100%;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background: #f5f5f5;
+        }
+
+        .stats {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat {
+            background: #f7fafc;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2d3748;
+        }
+
+        .log {
+            margin-top: 20px;
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            margin: 5px 0;
+        }
+
+        .log-entry.error {
+            color: #fc8181;
+        }
+
+        .log-entry.success {
+            color: #68d391;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎥 VisionCore Stream</h1>
+        <div id="status" class="status disconnected">⚫ Disconnected</div>
+
+        <div class="controls">
+            <button class="connect" onclick="connect()">Connect</button>
+            <button class="disconnect" onclick="disconnect()">Disconnect</button>
+        </div>
+
+        <canvas id="canvas"></canvas>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">FPS</div>
+                <div class="stat-value" id="fps">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Frames</div>
+                <div class="stat-value" id="frameCount">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">Bandwidth</div>
+                <div class="stat-value" id="bandwidth">0 KB/s</div>
+            </div>
+        </div>
+
+        <div class="log" id="log"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let frameCount = 0;
+        let lastFrameTime = Date.now();
+        let fps = 0;
+        let bytesReceived = 0;
+        let lastBandwidthUpdate = Date.now();
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+
+            // Keep only last 50 entries
+            while (logDiv.children.length > 50) {
+                logDiv.removeChild(logDiv.firstChild);
+            }
+        }
+
+        function updateStatus(connected) {
+            const statusDiv = document.getElementById('status');
+            if (connected) {
+                statusDiv.textContent = '🟢 Connected';
+                statusDiv.className = 'status connected';
+            } else {
+                statusDiv.textContent = '⚫ Disconnected';
+                statusDiv.className = 'status disconnected';
+            }
+        }
+
+        function connect() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                log('Already connected', 'error');
+                return;
+            }
+
+            log('Connecting to ws://localhost:9001...');
+
+            ws = new WebSocket('ws://localhost:9001');
+            ws.binaryType = 'blob';
+
+            ws.onopen = () => {
+                log('Connected successfully', 'success');
+                updateStatus(true);
+            };
+
+            ws.onmessage = async (event) => {
+                if (event.data instanceof Blob) {
+                    // Update bandwidth stats
+                    bytesReceived += event.data.size;
+                    const now = Date.now();
+                    if (now - lastBandwidthUpdate > 1000) {
+                        const kbps = (bytesReceived / 1024).toFixed(2);
+                        document.getElementById('bandwidth').textContent = kbps + ' KB/s';
+                        bytesReceived = 0;
+                        lastBandwidthUpdate = now;
+                    }
+
+                    // Display frame
+                    const url = URL.createObjectURL(event.data);
+                    const img = new Image();
+                    
+                    img.onload = () => {
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+                        URL.revokeObjectURL(url);
+
+                        // Update FPS
+                        frameCount++;
+                        const now = Date.now();
+                        const elapsed = now - lastFrameTime;
+                        
+                        if (elapsed > 0) {
+                            fps = Math.round(1000 / elapsed);
+                            document.getElementById('fps').textContent = fps;
+                        }
+                        
+                        lastFrameTime = now;
+                        document.getElementById('frameCount').textContent = frameCount;
+                    };
+                    
+                    img.src = url;
+                }
+            };
+
+            ws.onerror = (error) => {
+                log('WebSocket error', 'error');
+                console.error(error);
+            };
+
+            ws.onclose = () => {
+                log('Disconnected', 'error');
+                updateStatus(false);
+                ws = null;
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                log('Disconnecting...');
+            } else {
+                log('Not connected', 'error');
+            }
+        }
+
+        // Auto-connect on page load
+        window.addEventListener('load', () => {
+            log('Page loaded, ready to connect');
+        });
+    </script>
+</body>
+</html>
