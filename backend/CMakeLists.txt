@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
 
-
 project(
   VisionCore 
   VERSION 0.1.0 
@@ -24,18 +23,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
 option(VISIONCORE_BUILD_TESTS "Build VisionCore tests" ON)
 
-
 # =================
 # Depedencies 
 # =================
-
 
 find_package(OpenCV 4 REQUIRED COMPONENTS
     core
@@ -45,14 +41,49 @@ find_package(OpenCV 4 REQUIRED COMPONENTS
     highgui
 )
 find_package(Threads REQUIRED)
-
 find_package(nlohmann_json 3.10 REQUIRED)
 
 # Qt5 here until network stream and display are moved to separate modules
-# TODO : remove Qt dependency when those modules are created
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
 
+# uWebSockets (header-only)
+find_path(UWEBSOCKETS_INCLUDE_DIR 
+    NAMES uWebSockets/App.h
+    PATHS /usr/include /usr/local/include
+)
+
+if(NOT UWEBSOCKETS_INCLUDE_DIR)
+    message(FATAL_ERROR "uWebSockets headers not found")
+endif()
+
+message(STATUS "uWebSockets headers: ${UWEBSOCKETS_INCLUDE_DIR}")
+
+# Try to find uSockets library (may be part of uwebsockets package)
+find_library(USOCKETS_LIB 
+    NAMES uSockets usockets
+    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
+)
+
+if(USOCKETS_LIB)
+    message(STATUS "uSockets library found: ${USOCKETS_LIB}")
+    set(WEBSOCKET_LIBS ${USOCKETS_LIB})
+else()
+    message(STATUS "uSockets library not found, will try static linking")
+    # Some distros include uSockets as static lib in uwebsockets
+    find_library(USOCKETS_STATIC
+        NAMES libuSockets.a libusockets.a
+        PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
+    )
+    
+    if(USOCKETS_STATIC)
+        message(STATUS "uSockets static library found: ${USOCKETS_STATIC}")
+        set(WEBSOCKET_LIBS ${USOCKETS_STATIC})
+    else()
+        message(WARNING "uSockets not found, WebSocket features may not link properly")
+        set(WEBSOCKET_LIBS "")
+    endif()
+endif()
 
 # ========================
 # Sources auto-detection 
@@ -77,6 +108,7 @@ add_library(visioncore ${VISIONCORE_SOURCES})
 target_include_directories(visioncore
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${UWEBSOCKETS_INCLUDE_DIR}
 )
 
 target_link_libraries(visioncore
@@ -88,6 +120,8 @@ target_link_libraries(visioncore
         opencv_highgui
         Threads::Threads
         nlohmann_json::nlohmann_json
+        ${USOCKETS_LIB}
+        z  # zlib for compression
 )
 
 target_compile_features(visioncore PUBLIC cxx_std_20)
@@ -99,7 +133,6 @@ target_compile_options(visioncore
         -Wpedantic
 )
 
-
 # ========================
 # Executable 
 # ========================
@@ -110,13 +143,10 @@ add_executable(visioncore_app
 target_link_libraries(visioncore_app
     PRIVATE
         visioncore
-        # Qt5 here until network stream and display are moved to separate modules
-        # TODO : remove Qt dependency when those modules are created
         Qt5::Widgets
 )
 
 target_compile_features(visioncore_app PRIVATE cxx_std_20)
-
 
 # ========================
 # Tests (optional)
@@ -126,13 +156,11 @@ if(VISIONCORE_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-
 # ========================
 # Code Coverage Target
 # ========================
 find_program(LCOV_PATH lcov)
 find_program(GENHTML_PATH genhtml)
-
 
 file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
 
@@ -188,7 +216,6 @@ else()
     message(STATUS "lcov or genhtml not found - coverage target will not be available")
 endif()
 
-
 # ========================
 # Static Analysis Target
 # ========================
@@ -219,4 +246,3 @@ if(CPPCHECK_PATH)
 else()
     message(STATUS "cppcheck not found - cppcheck target will not be available")
 endif()
-
