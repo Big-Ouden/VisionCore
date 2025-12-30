@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 project(
   VisionCore 
   VERSION 0.1.0 
-  LANGUAGES CXX
+  LANGUAGES CXX C
 )
 
 option(CODE_COVERAGE "Enable coverage reporting" ON)
@@ -30,7 +30,7 @@ endif()
 option(VISIONCORE_BUILD_TESTS "Build VisionCore tests" ON)
 
 # =================
-# Depedencies 
+# Dependencies 
 # =================
 
 find_package(OpenCV 4 REQUIRED COMPONENTS
@@ -46,44 +46,75 @@ find_package(nlohmann_json 3.10 REQUIRED)
 # Qt5 here until network stream and display are moved to separate modules
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
+# ----------------------
+# uWebSockets via FetchContent
+# ----------------------
+include(FetchContent)
 
-# uWebSockets (header-only)
-find_path(UWEBSOCKETS_INCLUDE_DIR 
-    NAMES uWebSockets/App.h
-    PATHS /usr/include /usr/local/include
+FetchContent_Declare(
+    uWebSockets
+    GIT_REPOSITORY https://github.com/uNetworking/uWebSockets.git
+    GIT_TAG v20.14.0
 )
 
-if(NOT UWEBSOCKETS_INCLUDE_DIR)
-    message(FATAL_ERROR "uWebSockets headers not found")
-endif()
+FetchContent_MakeAvailable(uWebSockets)
 
-message(STATUS "uWebSockets headers: ${UWEBSOCKETS_INCLUDE_DIR}")
-
-# Try to find uSockets library (may be part of uwebsockets package)
-find_library(USOCKETS_LIB 
-    NAMES uSockets usockets
-    PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
+# uWebSockets est une bibliothèque header-only, on crée une target INTERFACE
+add_library(uWebSockets INTERFACE)
+target_include_directories(uWebSockets INTERFACE 
+    ${uwebsockets_SOURCE_DIR}/src
 )
 
-if(USOCKETS_LIB)
-    message(STATUS "uSockets library found: ${USOCKETS_LIB}")
-    set(WEBSOCKET_LIBS ${USOCKETS_LIB})
+# uWebSockets dépend de uSockets
+FetchContent_Declare(
+    uSockets
+    GIT_REPOSITORY https://github.com/uNetworking/uSockets.git
+    GIT_TAG v0.8.8
+)
+
+FetchContent_MakeAvailable(uSockets)
+
+# Créer une bibliothèque pour uSockets avec tous les fichiers nécessaires
+set(USOCKETS_SOURCES
+    ${usockets_SOURCE_DIR}/src/bsd.c
+    ${usockets_SOURCE_DIR}/src/context.c
+    ${usockets_SOURCE_DIR}/src/loop.c
+    ${usockets_SOURCE_DIR}/src/socket.c
+    ${usockets_SOURCE_DIR}/src/udp.c
+    ${usockets_SOURCE_DIR}/src/quic.c
+)
+
+# Ajouter les sources d'évènements
+if(WIN32)
+    list(APPEND USOCKETS_SOURCES ${usockets_SOURCE_DIR}/src/eventing/libuv.c)
 else()
-    message(STATUS "uSockets library not found, will try static linking")
-    # Some distros include uSockets as static lib in uwebsockets
-    find_library(USOCKETS_STATIC
-        NAMES libuSockets.a libusockets.a
-        PATHS /usr/lib /usr/local/lib /usr/lib/x86_64-linux-gnu
-    )
-    
-    if(USOCKETS_STATIC)
-        message(STATUS "uSockets static library found: ${USOCKETS_STATIC}")
-        set(WEBSOCKET_LIBS ${USOCKETS_STATIC})
-    else()
-        message(WARNING "uSockets not found, WebSocket features may not link properly")
-        set(WEBSOCKET_LIBS "")
-    endif()
+    list(APPEND USOCKETS_SOURCES ${usockets_SOURCE_DIR}/src/eventing/epoll_kqueue.c)
 endif()
+
+# Ajouter les sources crypto selon la disponibilité d'OpenSSL
+find_package(OpenSSL)
+if(OPENSSL_FOUND)
+    list(APPEND USOCKETS_SOURCES 
+        ${usockets_SOURCE_DIR}/src/crypto/openssl.c
+        ${usockets_SOURCE_DIR}/src/crypto/sni_tree.cpp
+    )
+endif()
+
+add_library(usockets STATIC ${USOCKETS_SOURCES})
+target_include_directories(usockets PUBLIC 
+    ${usockets_SOURCE_DIR}/src
+)
+
+# Configuration OpenSSL
+if(OPENSSL_FOUND)
+    target_link_libraries(usockets PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(usockets PUBLIC LIBUS_USE_OPENSSL)
+else()
+    # Sans OpenSSL, on n'utilise pas les fonctionnalités SSL
+    target_compile_definitions(usockets PUBLIC LIBUS_NO_SSL)
+endif()
+
+target_link_libraries(uWebSockets INTERFACE usockets)
 
 # ========================
 # Sources auto-detection 
@@ -108,7 +139,6 @@ add_library(visioncore ${VISIONCORE_SOURCES})
 target_include_directories(visioncore
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${UWEBSOCKETS_INCLUDE_DIR}
 )
 
 target_link_libraries(visioncore
@@ -120,8 +150,8 @@ target_link_libraries(visioncore
         opencv_highgui
         Threads::Threads
         nlohmann_json::nlohmann_json
-        ${USOCKETS_LIB}
-        z  # zlib for compression
+        uWebSockets
+        z
 )
 
 target_compile_features(visioncore PUBLIC cxx_std_20)
