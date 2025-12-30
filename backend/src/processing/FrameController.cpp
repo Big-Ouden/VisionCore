@@ -61,6 +61,15 @@ void FrameController::stop() {
     source_->close();
 }
 
+// dans FrameController.cpp
+void FrameController::setEncodedFrameCallback(EncodedFrameCallback callback) {
+  encoded_frame_callback_ = std::move(callback);
+}
+
+void FrameController::setEncoder(FrameEncoder encoder) {
+  encoder_ = std::move(encoder);
+}
+
 void FrameController::workerLoop() {
   cv::Mat input;
   cv::Mat output;
@@ -98,37 +107,43 @@ void FrameController::workerLoop() {
       frame_callback_(input_copy, output, frame_id_);
     }
 
+    if (encoded_frame_callback_) {
+      std::vector<uint8_t> buffer;
+      if (encoder_.encodeJPEG(output, buffer)) {
+        encoded_frame_callback_(buffer);
+      }
+    }
+
     ++frame_id_;
 
-    // Gestion FPS et frames manquées
+    // FPS gestion
     next_frame_time +=
         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             frame_duration);
     auto now = std::chrono::steady_clock::now();
 
     if (now > next_frame_time) {
-      // On a pris du retard, compter frames dropped
+      // Retard, count dropped frames
       size_t skipped = static_cast<size_t>(
           std::chrono::duration<double>(now - next_frame_time).count() /
           frame_duration.count());
       dropped_frames += skipped;
-      // Ajuster next_frame_time pour ne pas s'accumuler
+      // Ajust next_frame_time not to accumulate
 
       next_frame_time =
           now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                     frame_duration);
     }
 
-    // Dormir jusqu'à la prochaine frame si nécessaire
+    // sleep until next_frame_time
     if (target_fps_ > 0.0) {
       std::this_thread::sleep_until(next_frame_time);
     }
   }
 
-  // Stats finales
   if (frame_id_ > 0) {
     double avg_frame_ms = total_frame_time / static_cast<double>(frame_id_);
-    double actual_fps = 1000.0 / avg_frame_ms;
+    double actual_fps = 10.0 / avg_frame_ms;
     LOG_INFO("Frames processed:" + std::to_string(frame_id_) +
              ", dropped: " + std::to_string(dropped_frames) +
              ", avg frame time:" + std::to_string(avg_frame_ms) +

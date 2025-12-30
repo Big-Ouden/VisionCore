@@ -12,6 +12,7 @@
 
 #include "core/VideoSource.hpp"
 #include "pipeline/FramePipeline.hpp"
+#include "processing/FrameEncoder.hpp"
 
 namespace visioncore::processing {
 
@@ -110,6 +111,29 @@ public:
    */
   void setErrorCallback(ErrorCallback cb);
 
+  /**
+   * @brief Callback invoked with encoded frame data.
+   *
+   * @param encoded_data Encoded frame byte buffer
+   */
+  using EncodedFrameCallback =
+      std::function<void(const std::vector<uint8_t> &encoded_data)>;
+
+  /**
+   * @brief Set the encoded frame callback and encoder.
+   *
+   * @param callback Callback invoked with encoded frame data
+   * @param encoder  Frame encoder to use
+   */
+  void setEncodedFrameCallback(EncodedFrameCallback callback);
+
+  /**
+   * @brief Set the frame encoder.
+   *
+   * @param encoder Frame encoder to use
+   */
+  void setEncoder(FrameEncoder encoder);
+
 private:
   /**
    * @brief Main worker loop executed in a dedicated thread.
@@ -125,8 +149,10 @@ private:
 
   double target_fps_{30.0}; ///< Target FPS limit
 
-  FrameCallback frame_callback_; ///< Frame output callback
-  ErrorCallback error_callback_; ///< Error callback
+  FrameCallback frame_callback_;                ///< Frame output callback
+  EncodedFrameCallback encoded_frame_callback_; ///< Frame output callback
+  FrameEncoder encoder_;                        ///< Frame encoder
+  ErrorCallback error_callback_;                ///< Error callback
 
   uint64_t frame_id_{0}; ///< Frame counter
 };

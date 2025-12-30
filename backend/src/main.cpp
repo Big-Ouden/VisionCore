@@ -1,7 +1,8 @@
-/**
- * @file main.cpp
- * @brief Entry Point for VisionCore pipeline demo application
- */
+
+/* ============================================================
+ * main.cpp
+ * VisionCore pipeline demo with FrameEncoder
+ * ============================================================ */
 
 #include <QApplication>
 
@@ -34,21 +35,17 @@
 
 // Processing
 #include "processing/FrameController.hpp"
+#include "processing/FrameEncoder.hpp"
 
 // Utils
 #include "utils/Logger.hpp"
 
-#include <chrono>
-#include <thread>
-
+using namespace visioncore;
 using Clock = std::chrono::steady_clock;
 
-using namespace visioncore;
-
 /* ============================================================
- * Error handling helpers
+ * Error helpers
  * ============================================================ */
-
 template <typename T>
 T unwrap_or_exit(pipeline::PipelineResult<T> &&res,
                  const std::string &context) {
@@ -72,7 +69,6 @@ inline void unwrap_or_exit(pipeline::PipelineResult<void> &&res,
 /* ============================================================
  * Usage
  * ============================================================ */
-
 void printUsage(const std::string &programName) {
   std::cout << "Usage:\n"
             << "  " << programName << " --image <path>\n"
@@ -83,9 +79,7 @@ void printUsage(const std::string &programName) {
 /* ============================================================
  * Main
  * ============================================================ */
-
 int main(int argc, char *argv[]) {
-
   utils::Logger::instance().setLogLevel(utils::LogLevel::INFO);
   QApplication app(argc, argv);
 
@@ -96,10 +90,6 @@ int main(int argc, char *argv[]) {
 
   const std::string sourceType = argv[1];
   const std::string sourceParam = argv[2];
-
-  /* ------------------------------------------------------------
-   * Source creation
-   * ------------------------------------------------------------ */
 
   std::unique_ptr<core::VideoSource> source;
 
@@ -121,19 +111,13 @@ int main(int argc, char *argv[]) {
   }
 
   LOG_INFO("Source opened: " + source->getName());
-  LOG_INFO("Press 'h' (side-by-side), 'o' (original), 'f' (filtered)");
-  LOG_INFO("Press 'g' to toggle grayscale filter");
-  LOG_INFO("Press 'q' or ESC to quit");
 
   /* ------------------------------------------------------------
    * Controller setup
    * ------------------------------------------------------------ */
   processing::FrameController controller;
 
-  /* ------------------------------------------------------------
-   * Pipeline configuration
-   * ------------------------------------------------------------ */
-
+  // --- Pipeline setup ---
   auto &pipeline = controller.getPipeline();
   auto grayscale = std::make_shared<filters::GrayscaleFilter>();
   unwrap_or_exit(pipeline.addFilter(grayscale), "Add Grayscale Filter");
@@ -146,10 +130,14 @@ int main(int argc, char *argv[]) {
       pipeline.addFilter(std::make_shared<filters::ResizeFilter>(1.0)),
       "Add Resize Filter");
 
-  /* ------------------------------------------------------------
-   * Frame callback
-   * ------------------------------------------------------------ */
+  // --- Encoder setup ---
+  processing::FrameEncoder encoder;
+  controller.setEncoder(encoder);
+  controller.setEncodedFrameCallback([](const std::vector<uint8_t> &data) {
+    LOG_DEBUG("Encoded frame size: " + std::to_string(data.size()));
+  });
 
+  // --- Frame callback for display ---
   cv::Mat last_original;
   cv::Mat last_processed;
   std::mutex frame_mutex;
@@ -165,34 +153,17 @@ int main(int argc, char *argv[]) {
   });
 
   /* ------------------------------------------------------------
-   * Start processing engine
+   * Start engine
    * ------------------------------------------------------------ */
-
   controller.start(std::move(source), 30.0);
 
-  LOG_INFO("Controls:");
-  LOG_INFO("  g : toggle grayscale");
-  LOG_INFO("  1 : invert");
-  LOG_INFO("  2 : contrast (2.0)");
-  LOG_INFO("  3 : brightness (+1.5)");
-  LOG_INFO("  4 : gamma (0.5)");
-  LOG_INFO("  5 : logarithmic");
-  LOG_INFO("  6 : exponential");
-  LOG_INFO("  7 : threshold (128)");
-  LOG_INFO("  q / ESC : quit");
-
   /* ------------------------------------------------------------
-   * UI loop (main thread only)
+   * UI loop (main thread)
    * ------------------------------------------------------------ */
-
   bool running = true;
-
   while (running) {
-
     if (frame_available.load(std::memory_order_acquire)) {
-
       cv::Mat o, p;
-
       {
         std::lock_guard<std::mutex> lock(frame_mutex);
         o = last_original;
@@ -201,70 +172,57 @@ int main(int argc, char *argv[]) {
       }
 
       if (!o.empty() && !p.empty()) {
-
         if (o.channels() == 1)
           cv::cvtColor(o, o, cv::COLOR_GRAY2BGR);
-
         if (p.channels() == 1)
           cv::cvtColor(p, p, cv::COLOR_GRAY2BGR);
 
         cv::Mat display;
         cv::hconcat(o, p, display);
-
         cv::imshow("VisionCore", display);
       }
     }
 
     int key = cv::waitKey(10);
-
     switch (key) {
-
     case 'g':
     case 'G':
       grayscale->setEnabled(!grayscale->isEnabled());
       LOG_INFO(std::string("Grayscale: ") +
                (grayscale->isEnabled() ? "enabled" : "disabled"));
       break;
-
     case '1':
       lut->setParameter("lut_type", "invert");
       LOG_INFO("LUT: invert");
       break;
-
     case '2':
       lut->setParameter("lut_type", "contrast");
       lut->setParameter("param", 2.0);
       LOG_INFO("LUT: contrast (2.0)");
       break;
-
     case '3':
       lut->setParameter("lut_type", "brightness");
       lut->setParameter("param", 1.5);
       LOG_INFO("LUT: brightness (+1.5)");
       break;
-
     case '4':
       lut->setParameter("lut_type", "gamma");
       lut->setParameter("param", 0.5);
       LOG_INFO("LUT: gamma (0.5)");
       break;
-
     case '5':
       lut->setParameter("lut_type", "logarithmic");
       LOG_INFO("LUT: logarithmic");
       break;
-
     case '6':
       lut->setParameter("lut_type", "exponential");
       LOG_INFO("LUT: exponential");
       break;
-
     case '7':
       lut->setParameter("lut_type", "threshold");
       lut->setParameter("param", 128);
       LOG_INFO("LUT: threshold (128)");
       break;
-
     case 'q':
     case 'Q':
     case 27:
@@ -276,14 +234,10 @@ int main(int argc, char *argv[]) {
   /* ------------------------------------------------------------
    * Shutdown
    * ------------------------------------------------------------ */
-
   controller.stop();
-
   cv::destroyAllWindows();
   cv::waitKey(100);
 
   LOG_INFO("Application terminated cleanly");
-
-  controller.stop();
   return EXIT_SUCCESS;
 }
