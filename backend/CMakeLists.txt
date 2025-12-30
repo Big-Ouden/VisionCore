@@ -54,22 +54,37 @@ include(FetchContent)
 FetchContent_Declare(
     uWebSockets
     GIT_REPOSITORY https://github.com/uNetworking/uWebSockets.git
-    GIT_TAG v20.14.0
+    GIT_TAG master
 )
 
 FetchContent_MakeAvailable(uWebSockets)
 
 # uWebSockets est une bibliothèque header-only, on crée une target INTERFACE
 add_library(uWebSockets INTERFACE)
+
+# Créer un lien symbolique ou utiliser le bon chemin d'include
+# Les headers sont directement dans src/, pas dans src/uWebSockets/
 target_include_directories(uWebSockets INTERFACE 
     ${uwebsockets_SOURCE_DIR}/src
+    ${usockets_SOURCE_DIR}/src
+)
+
+# Alternative: créer un alias pour permettre #include <uWebSockets/App.h>
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/include)
+file(CREATE_LINK 
+    ${uwebsockets_SOURCE_DIR}/src 
+    ${CMAKE_BINARY_DIR}/include/uWebSockets 
+    SYMBOLIC
+)
+target_include_directories(uWebSockets INTERFACE 
+    ${CMAKE_BINARY_DIR}/include
 )
 
 # uWebSockets dépend de uSockets
 FetchContent_Declare(
     uSockets
     GIT_REPOSITORY https://github.com/uNetworking/uSockets.git
-    GIT_TAG v0.8.8
+    GIT_TAG master
 )
 
 FetchContent_MakeAvailable(uSockets)
@@ -96,8 +111,11 @@ find_package(OpenSSL)
 if(OPENSSL_FOUND)
     list(APPEND USOCKETS_SOURCES 
         ${usockets_SOURCE_DIR}/src/crypto/openssl.c
-        ${usockets_SOURCE_DIR}/src/crypto/sni_tree.cpp
     )
+    # Vérifier si sni_tree.cpp existe avant de l'ajouter
+    if(EXISTS ${usockets_SOURCE_DIR}/src/crypto/sni_tree.cpp)
+        list(APPEND USOCKETS_SOURCES ${usockets_SOURCE_DIR}/src/crypto/sni_tree.cpp)
+    endif()
 endif()
 
 add_library(usockets STATIC ${USOCKETS_SOURCES})
