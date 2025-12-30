@@ -63,7 +63,7 @@ void LUTFilter::setParameter(const std::string &name,
     } else if (type_str == "exponential") {
       lut_type_ = LUTType::EXPONENTIAL;
 
-    } else if (type_str == "threshold") {
+    } else if (type_str == "threshold_binary") {
       lut_type_ = LUTType::THRESHOLD_BINARY;
 
     } else {

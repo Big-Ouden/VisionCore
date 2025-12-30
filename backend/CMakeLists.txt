@@ -1,10 +1,9 @@
 cmake_minimum_required(VERSION 3.22)
 
-
 project(
   VisionCore 
   VERSION 0.1.0 
-  LANGUAGES CXX
+  LANGUAGES CXX C
 )
 
 option(CODE_COVERAGE "Enable coverage reporting" ON)
@@ -24,18 +23,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
 option(VISIONCORE_BUILD_TESTS "Build VisionCore tests" ON)
 
-
 # =================
-# Depedencies 
+# Dependencies 
 # =================
-
 
 find_package(OpenCV 4 REQUIRED COMPONENTS
     core
@@ -45,14 +41,98 @@ find_package(OpenCV 4 REQUIRED COMPONENTS
     highgui
 )
 find_package(Threads REQUIRED)
-
 find_package(nlohmann_json 3.10 REQUIRED)
 
 # Qt5 here until network stream and display are moved to separate modules
-# TODO : remove Qt dependency when those modules are created
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
+# ----------------------
+# uWebSockets via FetchContent
+# ----------------------
+include(FetchContent)
 
+FetchContent_Declare(
+    uWebSockets
+    GIT_REPOSITORY https://github.com/uNetworking/uWebSockets.git
+    GIT_TAG master
+)
+
+FetchContent_MakeAvailable(uWebSockets)
+
+# uWebSockets est une bibliothèque header-only, on crée une target INTERFACE
+add_library(uWebSockets INTERFACE)
+
+# Créer un lien symbolique ou utiliser le bon chemin d'include
+# Les headers sont directement dans src/, pas dans src/uWebSockets/
+target_include_directories(uWebSockets INTERFACE 
+    ${uwebsockets_SOURCE_DIR}/src
+    ${usockets_SOURCE_DIR}/src
+)
+
+# Alternative: créer un alias pour permettre #include <uWebSockets/App.h>
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/include)
+file(CREATE_LINK 
+    ${uwebsockets_SOURCE_DIR}/src 
+    ${CMAKE_BINARY_DIR}/include/uWebSockets 
+    SYMBOLIC
+)
+target_include_directories(uWebSockets INTERFACE 
+    ${CMAKE_BINARY_DIR}/include
+)
+
+# uWebSockets dépend de uSockets
+FetchContent_Declare(
+    uSockets
+    GIT_REPOSITORY https://github.com/uNetworking/uSockets.git
+    GIT_TAG master
+)
+
+FetchContent_MakeAvailable(uSockets)
+
+# Créer une bibliothèque pour uSockets avec tous les fichiers nécessaires
+set(USOCKETS_SOURCES
+    ${usockets_SOURCE_DIR}/src/bsd.c
+    ${usockets_SOURCE_DIR}/src/context.c
+    ${usockets_SOURCE_DIR}/src/loop.c
+    ${usockets_SOURCE_DIR}/src/socket.c
+    ${usockets_SOURCE_DIR}/src/udp.c
+    ${usockets_SOURCE_DIR}/src/quic.c
+)
+
+# Ajouter les sources d'évènements
+if(WIN32)
+    list(APPEND USOCKETS_SOURCES ${usockets_SOURCE_DIR}/src/eventing/libuv.c)
+else()
+    list(APPEND USOCKETS_SOURCES ${usockets_SOURCE_DIR}/src/eventing/epoll_kqueue.c)
+endif()
+
+# Ajouter les sources crypto selon la disponibilité d'OpenSSL
+find_package(OpenSSL)
+if(OPENSSL_FOUND)
+    list(APPEND USOCKETS_SOURCES 
+        ${usockets_SOURCE_DIR}/src/crypto/openssl.c
+    )
+    # Vérifier si sni_tree.cpp existe avant de l'ajouter
+    if(EXISTS ${usockets_SOURCE_DIR}/src/crypto/sni_tree.cpp)
+        list(APPEND USOCKETS_SOURCES ${usockets_SOURCE_DIR}/src/crypto/sni_tree.cpp)
+    endif()
+endif()
+
+add_library(usockets STATIC ${USOCKETS_SOURCES})
+target_include_directories(usockets PUBLIC 
+    ${usockets_SOURCE_DIR}/src
+)
+
+# Configuration OpenSSL
+if(OPENSSL_FOUND)
+    target_link_libraries(usockets PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    target_compile_definitions(usockets PUBLIC LIBUS_USE_OPENSSL)
+else()
+    # Sans OpenSSL, on n'utilise pas les fonctionnalités SSL
+    target_compile_definitions(usockets PUBLIC LIBUS_NO_SSL)
+endif()
+
+target_link_libraries(uWebSockets INTERFACE usockets)
 
 # ========================
 # Sources auto-detection 
@@ -88,6 +168,8 @@ target_link_libraries(visioncore
         opencv_highgui
         Threads::Threads
         nlohmann_json::nlohmann_json
+        uWebSockets
+        z
 )
 
 target_compile_features(visioncore PUBLIC cxx_std_20)
@@ -99,7 +181,6 @@ target_compile_options(visioncore
         -Wpedantic
 )
 
-
 # ========================
 # Executable 
 # ========================
@@ -110,13 +191,10 @@ add_executable(visioncore_app
 target_link_libraries(visioncore_app
     PRIVATE
         visioncore
-        # Qt5 here until network stream and display are moved to separate modules
-        # TODO : remove Qt dependency when those modules are created
         Qt5::Widgets
 )
 
 target_compile_features(visioncore_app PRIVATE cxx_std_20)
-
 
 # ========================
 # Tests (optional)
@@ -126,13 +204,11 @@ if(VISIONCORE_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-
 # ========================
 # Code Coverage Target
 # ========================
 find_program(LCOV_PATH lcov)
 find_program(GENHTML_PATH genhtml)
-
 
 file(COPY ${CMAKE_SOURCE_DIR}/assets DESTINATION ${CMAKE_BINARY_DIR})
 
@@ -188,7 +264,6 @@ else()
     message(STATUS "lcov or genhtml not found - coverage target will not be available")
 endif()
 
-
 # ========================
 # Static Analysis Target
 # ========================
@@ -219,4 +294,3 @@ if(CPPCHECK_PATH)
 else()
     message(STATUS "cppcheck not found - cppcheck target will not be available")
 endif()
-

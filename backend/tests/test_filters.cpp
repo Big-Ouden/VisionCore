@@ -463,7 +463,7 @@ TEST_F(LUTFilterTest, ExponentialLUT) {
 
 TEST_F(LUTFilterTest, ThresholdBinaryLUT) {
   LUTFilter filter;
-  filter.setParameter("lut_type", "threshold");
+  filter.setParameter("lut_type", "threshold_binary");
   filter.setParameter("param", 128.0);
 
   cv::Mat input(1, 3, CV_8UC1);
@@ -525,7 +525,7 @@ TEST_F(LUTFilterTest, AllLUTTypeStrings) {
       {"gamma", "gamma"},
       {"logarithmic", "logarithmic"},
       {"exponential", "exponential"},
-      {"threshold", "threshold_binary"},
+      {"threshold_binary", "threshold_binary"},
   };
 
   for (const auto &c : cases) {
