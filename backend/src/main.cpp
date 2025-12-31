@@ -165,8 +165,8 @@ int main(int argc, char *argv[]) {
 
   auto &pipeline = controller.getPipeline();
 
-  auto resize = std::make_shared<filters::ResizeFilter>(0.5); // 50% scale
-  unwrap_or_exit(pipeline.addFilter(resize), "Add Resize Filter");
+  // auto resize = std::make_shared<filters::ResizeFilter>(0.5); // 50% scale
+  // unwrap_or_exit(pipeline.addFilter(resize), "Add Resize Filter");
 
   auto grayscale = std::make_shared<filters::GrayscaleFilter>();
   unwrap_or_exit(pipeline.addFilter(grayscale), "Add Grayscale Filter");
@@ -194,7 +194,7 @@ int main(int argc, char *argv[]) {
    * Frame encoder setup
    * ------------------------------------------------------------ */
 
-  processing::FrameEncoder encoder(85); // JPEG quality 85
+  processing::FrameEncoder encoder(100); // JPEG quality 85
 
   /* ------------------------------------------------------------
    * Frame callback with WebSocket streaming
@@ -233,7 +233,7 @@ int main(int argc, char *argv[]) {
 
   LOG_INFO("\nControls:");
   LOG_INFO("  g : toggle grayscale");
-  LOG_INFO("  r : change resize factor");
+  // LOG_INFO("  r : change resize factor");
   LOG_INFO("  1 : LUT invert");
   LOG_INFO("  2 : LUT contrast (2.0)");
   LOG_INFO("  3 : LUT brightness (+50)");
@@ -322,15 +322,15 @@ int main(int argc, char *argv[]) {
                (grayscale->isEnabled() ? "enabled" : "disabled"));
       break;
 
-    case 'r':
-    case 'R': {
-      auto params = resize->getParameters();
-      double current = params["scale_factor"].get<double>();
-      double newScale = (current == 0.5) ? 1.0 : 0.5;
-      resize->setParameter("scale_factor", newScale);
-      LOG_INFO("Resize scale: " + std::to_string(newScale));
-      break;
-    }
+      // case 'r':
+      // case 'R': {
+      //   auto params = resize->getParameters();
+      //   double current = params["scale_factor"].get<double>();
+      //   double newScale = (current == 0.5) ? 1.0 : 0.5;
+      //   resize->setParameter("scale_factor", newScale);
+      //   LOG_INFO("Resize scale: " + std::to_string(newScale));
+      //   break;
+      // }
 
     case '0':
       lut->setParameter("lut_type", "identity");
